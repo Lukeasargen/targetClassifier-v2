@@ -3,10 +3,15 @@ import random
 import time
 import numpy as np
 
+import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
+import psutil
+import torch
+from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
 
 from util import pil_loader
+from util import AddGaussianNoise, CustomTransformation
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'  # draw.polygon raised an error
 
@@ -63,7 +68,6 @@ class TargetGenerator():
         self.img_size = (img_size,img_size) if type(img_size)!=tuple else img_size
         self.min_size = min_size
         self.alias_factor = alias_factor
-        self.alias_size = tuple(i*alias_factor for i in self.img_size)
         self.target_transforms = target_transforms
         self.backgrounds = backgrounds
         if self.backgrounds is not None:
@@ -89,6 +93,7 @@ class TargetGenerator():
 
         # Compute the output size. 2 colors, 1 shape, 1 letter, 2 values for orientaion
         self.output_sizes = {
+            "has_target": 1,
             "angle": 2,
             "shape": len(self.shape_options),
             "letter": len(self.letter_options),
@@ -97,7 +102,7 @@ class TargetGenerator():
         }
         self.num_outputs = sum(self.output_sizes.values())
 
-    def draw_shape(self, draw, shp_idx, shp_color_idx):
+    def draw_shape(self, draw, img_size, min_size, shp_idx, shp_color_idx):
         """ Do not use directly. This is called within draw_target.
             This function draws the specified shape and color.
             Scale and rotation are uniformly sampled.
@@ -107,8 +112,8 @@ class TargetGenerator():
         shape = self.shape_options[shp_idx]
         # Uniformly sample that target size.
         # Half this is the radius of the circumscribed circle. Polygon vertices are on this circle.
-        r = (np.random.uniform(self.min_size, min(self.alias_size))) // 2
-        cx, cy = np.random.randint(r, self.alias_size[0]-r), np.random.randint(r, self.alias_size[1]-r)
+        r = (np.random.uniform(min_size*self.alias_factor, min(self.alias_factor*img_size[0], self.alias_factor*img_size[1]))) // 2
+        cx, cy = np.random.randint(r, self.alias_factor*img_size[0]-r), np.random.randint(r, self.alias_factor*img_size[1]-r)
         # Rotate each shape randomly.
         angle = np.random.uniform(0, 360)
         # Each shape as a different ltr_size. This defines an inscribed circle in the shape.
@@ -203,8 +208,7 @@ class TargetGenerator():
                 points.append( (c*ratio*np.cos((step*i + step/2) + np.radians(-angle))) + cx )
                 points.append( (c*ratio*np.sin((step*i + step/2) + np.radians(-angle))) + cy )
             draw.polygon(points, fill=shape_color)
-            ltr_size = int(c*ratio*np.random.randint(80, 95) / 100)
-
+            ltr_size = int(c*ratio*np.random.randint(90, 95) / 100)
         return (cx, cy), ltr_size, angle
 
     def draw_letter(self, draw, ltr_size, ltr_idx, ltr_color_idx):
@@ -222,32 +226,39 @@ class TargetGenerator():
         img = img.rotate(np.random.uniform(0, 360), expand=1)
         return img
 
-    def draw_target(self):
+    def draw_target(self, img_size, min_size, fill_prob=1.0, transparent_bkg=False):
         """ Draws a random target on a transparent PIL image. Also returns the correct labels. """
         # Sample the label space with uniform random sampling
         bkg_color_idx, shp_color_idx, ltr_color_idx = np.random.choice(range(len(self.color_options)), 3, replace=False)
-        shp_idx = np.random.randint(0, len(self.shape_options))
-        ltr_idx = np.random.randint(0, len(self.letter_options))
+        alias_size = (self.alias_factor*img_size[0], self.alias_factor*img_size[1])
+        has_target = np.random.rand() < fill_prob
         # Create a tranparent image. Transparent background allows PIL to overlay the image.
-        target = Image.new('RGBA', size=(self.alias_size[0], self.alias_size[1]), color=(100, 0, 0, 0))
-        draw = ImageDraw.Draw(target)
-        # Drawing puts the shape directly on the PIL image
-        # outputs are the center of the shape and the max letter size in pixels
-        (cx, cy), ltr_size, angle = self.draw_shape(draw, shp_idx, shp_color_idx)
-        letter = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
-        ox, oy = letter.size
-        temp = Image.new('RGBA', size=self.alias_size, color=(0, 0, 0, 0))
-        temp.paste(letter, (cx-(ox//2), cy-(oy//36)-(oy//2)), letter)  # Put letter with offset based on size
-        target.alpha_composite(temp)  # removes the transparent aliasing border from the letter
+        target = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
+        if has_target:
+            draw = ImageDraw.Draw(target)
+            shp_idx = np.random.randint(0, len(self.shape_options))
+            ltr_idx = np.random.randint(0, len(self.letter_options))
+            # Drawing puts the shape directly on the PIL image. Outputs are the center of the shape and the max letter size in pixels
+            (cx, cy), ltr_size, angle = self.draw_shape(draw, img_size, min_size, shp_idx, shp_color_idx)
+            letter = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
+            ox, oy = letter.size
+            temp = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
+            temp.paste(letter, (cx-(ox//2), cy-(oy//36)-(oy//2)), letter)  # Put letter with offset based on size
+            target.alpha_composite(temp)  # removes the transparent aliasing border from the letter
+        else:
+            # Null labels for when there is no target
+            angle, shp_idx, ltr_idx, shp_color_idx, ltr_color_idx = 0,0,0,0,0
 
-        # If there are no backgrounds, then use the bkg_color_idx.
-        if self.backgrounds == None:
+        # If there are no backgrounds and no transparent_bkg arg, then use the bkg_color_idx.
+        if self.backgrounds == None and not transparent_bkg:
             bkg_color = color_to_hsv(self.color_options[bkg_color_idx])
-            img = Image.new('RGB', size=self.alias_size, color=bkg_color)
-            img.paste(target, None, target)  # Alpha channel is the mask
+            img = Image.new('RGBA', size=alias_size, color=bkg_color)
+            if has_target:  # Add the target to to the background
+                img.paste(target, None, target)  # Alpha channel is the mask
             target = img
 
         label = {
+            "has_target": int(has_target),
             "angle" : angle,
             "shape": shp_idx,
             "letter": ltr_idx,
@@ -264,43 +275,111 @@ class TargetGenerator():
             self.bkg_count = 0
         return self.backgrounds[self.bkg_idxs[self.bkg_count]] 
 
-    def gen_classify(self):
+    def gen_classify(self, img_size=None, min_size=None, fill_prob=1.0):
         """ Generate a cropped target with it's classification label. """
-        target, label = self.draw_target()
+        if img_size == None:  # Use the default image size
+            img_size = self.img_size
+        else:  # otherwise make sure the input is a tuple
+            img_size = (img_size,img_size) if type(img_size)!=tuple else img_size
+        if min_size == None:
+            min_size = self.min_size
+        target, label = self.draw_target(img_size, min_size, fill_prob)
         if self.backgrounds is not None:
             bkg = self.get_background()
-            img = T.RandomResizedCrop((self.alias_size[1], self.alias_size[0]), scale=(0.08, 1.0), ratio=(3./4., 4./3.))(bkg)
+            img = T.RandomResizedCrop((self.alias_factor*img_size[1], self.alias_factor*img_size[0]), scale=(0.08, 1.0), ratio=(3./4., 4./3.))(bkg)
             img.paste(target, None, target)  # Alpha channel is the mask
         else:
             # If there are no backgrounds, draw_target puts a random color.
             img = target
-        img = img.resize(self.img_size).convert("RGB")
+        img = img.resize(img_size).convert("RGB")
         return img, label
 
-    def gen_segment(self):
+    def gen_segment(self, img_size=None, min_size=None, fill_prob=1.0):
         """ Generate an image with target mask. """
-        img = None
-        mask = None
+        if img_size == None:  # Use the default image size
+            img_size = self.img_size
+        else:  # otherwise make sure the input is a tuple
+            img_size = (img_size,img_size) if type(img_size)!=tuple else img_size
+        if min_size == None:
+            min_size = self.min_size
+        # Pick random gridsize based on input and target_size.
+        bkg_w, bkg_h = img_size
+        scale_w, scale_h = bkg_w//min_size, bkg_h//min_size  # Smallest grid cells based on the smallest target
+        max_num = min(scale_w, scale_h)
+        num = np.random.randint(1, max_num+1) if max_num>1 else 1 # Divisions along the smallest dimension
+        # Scale divisions two both axis
+        if bkg_w > bkg_h:
+            num_w = int(scale_w/scale_h * num)
+            num_h = num
+        else:
+            num_h = int(scale_h/scale_w * num)
+            num_w = num
+        step_w, step_h = bkg_w//num_w, bkg_h//num_h  # Rectangle size for each target
+        # This mask is first used to place all the targets, then converted into a binary image
+        place_targets = Image.new('RGBA', size=(bkg_w*self.alias_factor, bkg_h*self.alias_factor), color=(0, 0, 0, 0))
+        # Mask to fill the grid randomly with targets
+        target_mask = np.random.rand(num_w*num_h) < fill_prob
+        max_size = int(min(step_w, step_h))  # Targest target that can fit in the rectangle.
+        # Number of pixels the target can be moved from the center of the rectangle
+        offset_x, offset_y = int(step_w-max_size), int(step_h-max_size)
+        for i in range(len(target_mask)):
+            y = i // num_w
+            x = (i - y*num_w)
+            if target_mask[i]:
+                target, label = self.draw_target((step_w, step_h), min_size, transparent_bkg=True)
+                ox = np.random.randint(0, offset_x+1) if offset_x > 0 else 0
+                oy = np.random.randint(0, offset_y+1) if offset_y > 0 else 0
+                place_targets.paste(target, (int((x*step_w+ox)*self.alias_factor), int((y*step_h+oy)*self.alias_factor)), target)  # Alpha channel is the mask
+        mask = Image.new('RGBA', size=(bkg_w*self.alias_factor, bkg_h*self.alias_factor), color=(0, 0, 0, 0))
+        mask.alpha_composite(place_targets)  # Removes the transparent aliasing border from the mask
+        if self.backgrounds is not None:
+            bkg = self.get_background()
+            img = T.RandomResizedCrop((self.alias_factor*img_size[1], self.alias_factor*img_size[0]), scale=(0.08, 1.0), ratio=(3./4., 4./3.))(bkg)
+            img.paste(mask, None, mask)  # Alpha channel is the mask
+        else:
+            img = mask.convert("RGB")  # Return the mask in rgb
+        img = img.resize(img_size).convert("RGB")
+        # Convert the transparency to the binary mask
+        mask = Image.fromarray(np.asarray(mask)[:,:,3])
+        mask = mask.resize(img_size).convert("RGB")
         return img, mask
+
+class LiveClassifyDataset(Dataset):
+    def __init__(self, length, img_size, min_size, alias_factor=1, target_transforms=None,
+                fill_prob=1.0, backgrounds=None, transforms=None):
+        """ Dataset that makes generator object and calls it in __getitem__ """
+        self.length = length
+        self.gen = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
+        self.transforms = transforms if transforms else T.ToTensor()
+        self.fill_prob = fill_prob
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        img, y = self.gen.gen_classify(fill_prob=self.fill_prob)
+        target = list(y.values())
+        return self.transforms(img), torch.tensor(target, dtype=torch.float).squeeze()
+
 
 def visualize_classify(gen):
     nrows, ncols = 8, 8
     rows = []
     for i in range(nrows):
-        row = [gen.gen_classify()[0] for j in range(ncols)]
+        row = [gen.gen_classify(img_size=64, min_size=28, fill_prob=0.9)[0] for j in range(ncols)]
         rows.append( np.hstack(row) )
     grid_img = np.vstack(rows)
     im = Image.fromarray(grid_img.astype('uint8'), 'RGB')
     im.show()
-    # im.save("images/visualize_classify.png")
+    im.save("images/visualize_classify.png")
 
 def visualize_segment(gen):
-    nrows, ncols = 5, 3
+    nrows, ncols = 3, 2
     rows = []
     for i in range(nrows):
         row = []
         for j in range(ncols):
-            img, mask = gen.gen_segment(input_size=(400, 400), target_size=20, fill_prob=0.5)
+            img, mask = gen.gen_segment(img_size=(128, 128), min_size=28, fill_prob=0.5)
             row.append(img)
             row.append(mask)
         rows.append( np.hstack(row) )
@@ -308,19 +387,82 @@ def visualize_segment(gen):
     print(grid_img.shape)
     im = Image.fromarray(grid_img.astype('uint8'), 'RGB')
     im.show()
-    # im.save("images/visualize_segment.png")
+    im.save("images/visualize_segment.png")
 
+def dataset_stats(dataset, num=1000):
+    mean, var = 0.0, 0.0
+    t0 = time.time()
+    t1 = t0
+    for i in range(num):
+        img, _ = dataset[i]  # __getitem__ , img in shape [W, H, C]
+        # [1, C, H, W], expand so that the mean function can run on dim=0
+        img = np.expand_dims((np.array(img)), axis=0)
+        mean += np.mean(img, axis=(0, 2, 3))
+        var += np.var(img, axis=(0, 2, 3))  # you can add var, not std
+        if (i+1) % 100 == 0:
+            t2 = time.time()
+            print(f"{i+1}/{num} measured. Total time={t2-t0:.2f}s. Images per second {100/(t2-t1):.2f}.")
+            t1 = t2
+    print("mean :", mean/num)
+    print("var :", var/num)
+    print("std :", np.sqrt(var/num))
+
+def visualize_batch(dataloader):
+    from torchvision.utils import make_grid
+    for images, labels in dataloader:
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.imshow(make_grid((images.detach()[:64]), nrow=8).permute(1, 2, 0))
+        break
+    fig.savefig('images/classify_processed.png', bbox_inches='tight')
+    plt.show()
+
+def time_dataloader(dataset, batch_size=64, max_num_workers=8):
+    for i in range(max_num_workers+1):
+        print(f"Running with {i} workers")
+        ram_before = psutil.virtual_memory()[3]
+        train_loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False,
+            num_workers=i, drop_last=True, persistent_workers=(True if i >0 else False))
+        max_ram = 0
+        ts = time.time()
+        [_ for _ in train_loader]
+        t0 = time.time()
+        for batch_idx, (data, target) in enumerate(train_loader):
+            r = psutil.virtual_memory()[3]
+            max_ram = max(max_ram, r)
+        ram_usage = (max_ram - ram_before)*1e-9  # GB
+        duration = time.time()-t0
+        print(f"{duration:.2f} seconds with {i} workers. {duration/(batch_idx+1):.2f} seconds per batch. {ram_usage:.3f} GB ram.")
 
 if __name__ == "__main__":
 
-    img_size = 32, 32  # pixels, (input_size, input_size) or (width, height)
-    min_size = 26  # pixels
+    img_size = 32  # pixels, (input_size, input_size) or (width, height)
+    min_size = 30  # pixels
     alias_factor = 2  # generate higher resolution targets and downscale, improves aliasing effects
-    backgrounds = None  # load_backgrounds('images/backgrounds')  # pil array
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
+    backgrounds = load_backgrounds('images/backgrounds')  # pil array
+    fill_prob = 0.5
 
-    generator = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
-
+    # generator = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
     # visualize_classify(generator)
     # visualize_segment(generator)
+
+    batch_size = 64
+    train_size = 4096
+    shuffle = False
+    num_workers = 0
+    drop_last = True
+    train_transforms = T.Compose([
+        CustomTransformation(),
+        T.ToTensor(),
+        AddGaussianNoise(0.01),
+    ])
+
+    train_dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
+    # dataset_stats(train_dataset, num=1000)
+    # time_dataloader(train_dataset, batch_size=64, max_num_workers=8)
+
+    train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size ,shuffle=shuffle,
+        num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
+    # visualize_batch(train_loader)
 
