@@ -3,7 +3,7 @@ __pycache__
 .ipynb_checkpoints
 .vscode
 
-# Too many files and dev output images
 /images/*
 !images/readme
 /images/backgrounds/
+/logs*

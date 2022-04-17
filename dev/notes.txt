@@ -1,0 +1,56 @@
+tensorboard --logdir logs/
+--------------------------------------------------------------------------------
+Old dataloader
+11.50 seconds with 0 workers. 0.72 seconds per batch. 0.007 GB ram.
+12.59 seconds with 1 workers. 0.79 seconds per batch. 0.326 GB ram.
+7.95 seconds with 2 workers. 0.50 seconds per batch. 0.643 GB ram.
+7.72 seconds with 3 workers. 0.48 seconds per batch. 0.968 GB ram.
+7.40 seconds with 4 workers. 0.46 seconds per batch. 1.291 GB ram.
+8.31 seconds with 5 workers. 0.52 seconds per batch. 1.607 GB ram.
+8.78 seconds with 6 workers. 0.55 seconds per batch. 1.922 GB ram.
+9.79 seconds with 7 workers. 0.61 seconds per batch. 2.226 GB ram.
+10.45 seconds with 8 workers. 0.65 seconds per batch. 2.528 GB ram.
+
+New dataloader - 4x faster with 8 workers, and it uses way less memory
+12.40 seconds with 0 workers. 0.77 seconds per batch. 0.514 GB ram.
+12.84 seconds with 1 workers. 0.80 seconds per batch. 0.569 GB ram.
+6.83 seconds with 2 workers. 0.43 seconds per batch. 0.543 GB ram.
+5.16 seconds with 3 workers. 0.32 seconds per batch. 0.552 GB ram.
+3.64 seconds with 4 workers. 0.23 seconds per batch. 0.566 GB ram.
+3.65 seconds with 5 workers. 0.23 seconds per batch. 0.589 GB ram.
+2.97 seconds with 6 workers. 0.19 seconds per batch. 0.584 GB ram.
+3.07 seconds with 7 workers. 0.19 seconds per batch. 0.562 GB ram.
+2.43 seconds with 8 workers. 0.15 seconds per batch. 0.634 GB ram.
+--------------------------------------------------------------------------------
+--seed=42 --name=classify --workers=4
+
+no backgrounds, classify stats
+--mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862
+
+--img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 
+--backgrounds=images/backgrounds
+
+--epochs=1 --train_size=320 --batch=32
+
+--prediction_heads=1 --feature_dim=64 --dropout=0.0
+
+--opt=sgd --lr=1e-1 --weight_decay=5e-4 --momentum=0.9 --nesterov
+--opt=adam --lr=4e-3
+--opt=adamw --lr=4e-3 --weight_decay=5e-4
+--accumulate=1
+
+--scheduler=step --milestones 10 15 --lr_gamma=0.1
+--scheduler=exp --lr_gamma=0.9
+--scheduler=exp --plateau_patience
+--------------------------------------------------------------------------------
+todo
+scrap the single linear layer and just do multiple separate heads
+
+
+--------------------------------------------------------------------------------
+test commands
+python classify.py --seed=42 --name=classify --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --epochs=20 --train_size=320 --batch=32 --prediction_heads=8 --feature_dim=64 --scheduler=step --milestones 10 15 --lr_gamma=0.1
+
+python classify.py --seed=42 --name=classify --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --img_size=40 --min_size=28 --alias_factor=2 --fill_prob=0.9 --epochs=100 --train_size=320 --batch=32 --prediction_heads=1 --feature_dim=64 --dropout=0.2 --scheduler=step --milestones 70 90 --lr_gamma=0.1
+
+python classify.py --seed=42 --name=classify --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --epochs=200 --train_size=640 --batch=64 --prediction_heads=1 --feature_dim=128 --dropout=0.2 --scheduler=step --milestones 160 180 --lr_gamma=0.2

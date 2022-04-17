@@ -58,8 +58,7 @@ def make_regular_polygon(radius, sides, angle, center=(0,0)):
 def load_backgrounds(folder_path):
     print(" * Loading backgrounds...")
     ts = time.time()
-    backgrounds = [pil_loader(os.path.join(os.getcwd(), x)) for
-                    x in os.scandir(folder_path) if not x.is_dir()]
+    backgrounds = [pil_loader(os.path.join(os.getcwd(), x)) for x in os.scandir(folder_path)]
     print(f" ** Backgrounds loaded. {time.time()-ts:.03f} seconds for {len(backgrounds)} images.")
     return backgrounds
 
@@ -230,7 +229,7 @@ class TargetGenerator():
         """ Draws a random target on a transparent PIL image. Also returns the correct labels. """
         # Sample the label space with uniform random sampling
         bkg_color_idx, shp_color_idx, ltr_color_idx = np.random.choice(range(len(self.color_options)), 3, replace=False)
-        alias_size = (self.alias_factor*img_size[0], self.alias_factor*img_size[1])
+        alias_size = (int(self.alias_factor*img_size[0]), int(self.alias_factor*img_size[1]))
         has_target = np.random.rand() < fill_prob
         # Create a tranparent image. Transparent background allows PIL to overlay the image.
         target = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
@@ -316,7 +315,7 @@ class TargetGenerator():
             num_w = num
         step_w, step_h = bkg_w//num_w, bkg_h//num_h  # Rectangle size for each target
         # This mask is first used to place all the targets, then converted into a binary image
-        place_targets = Image.new('RGBA', size=(bkg_w*self.alias_factor, bkg_h*self.alias_factor), color=(0, 0, 0, 0))
+        place_targets = Image.new('RGBA', size=(int(bkg_w*self.alias_factor), int(bkg_h*self.alias_factor)), color=(0, 0, 0, 0))
         # Mask to fill the grid randomly with targets
         target_mask = np.random.rand(num_w*num_h) < fill_prob
         max_size = int(min(step_w, step_h))  # Targest target that can fit in the rectangle.
@@ -330,7 +329,7 @@ class TargetGenerator():
                 ox = np.random.randint(0, offset_x+1) if offset_x > 0 else 0
                 oy = np.random.randint(0, offset_y+1) if offset_y > 0 else 0
                 place_targets.paste(target, (int((x*step_w+ox)*self.alias_factor), int((y*step_h+oy)*self.alias_factor)), target)  # Alpha channel is the mask
-        mask = Image.new('RGBA', size=(bkg_w*self.alias_factor, bkg_h*self.alias_factor), color=(0, 0, 0, 0))
+        mask = Image.new('RGBA', size=(int(bkg_w*self.alias_factor), int(bkg_h*self.alias_factor)), color=(0, 0, 0, 0))
         mask.alpha_composite(place_targets)  # Removes the transparent aliasing border from the mask
         if self.backgrounds is not None:
             bkg = self.get_background()
@@ -418,8 +417,8 @@ def visualize_batch(dataloader):
     plt.show()
 
 def time_dataloader(dataset, batch_size=64, max_num_workers=8):
+    print(" * Time Dataloader...")
     for i in range(max_num_workers+1):
-        print(f"Running with {i} workers")
         ram_before = psutil.virtual_memory()[3]
         train_loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=False,
             num_workers=i, drop_last=True, persistent_workers=(True if i >0 else False))
@@ -436,19 +435,19 @@ def time_dataloader(dataset, batch_size=64, max_num_workers=8):
 
 if __name__ == "__main__":
 
-    img_size = 32  # pixels, (input_size, input_size) or (width, height)
-    min_size = 30  # pixels
+    img_size = 40  # pixels, (input_size, input_size) or (width, height)
+    min_size = 28  # pixels
     alias_factor = 2  # generate higher resolution targets and downscale, improves aliasing effects
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
-    backgrounds = load_backgrounds('images/backgrounds')  # pil array
+    backgrounds = None  # load_backgrounds('images/backgrounds')  # pil array
     fill_prob = 0.5
 
-    # generator = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
+    generator = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
     # visualize_classify(generator)
     # visualize_segment(generator)
 
     batch_size = 64
-    train_size = 4096
+    train_size = 1024
     shuffle = False
     num_workers = 0
     drop_last = True
@@ -458,11 +457,11 @@ if __name__ == "__main__":
         AddGaussianNoise(0.01),
     ])
 
-    train_dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
-    # dataset_stats(train_dataset, num=1000)
-    # time_dataloader(train_dataset, batch_size=64, max_num_workers=8)
+    dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
+    # dataset_stats(dataset, num=1000)
+    # time_dataloader(dataset, batch_size=64, max_num_workers=8)
 
-    train_loader = DataLoader(dataset=train_dataset, batch_size=batch_size ,shuffle=shuffle,
+    loader = DataLoader(dataset=dataset, batch_size=batch_size ,shuffle=shuffle,
         num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
-    # visualize_batch(train_loader)
+    # visualize_batch(loader)
 
