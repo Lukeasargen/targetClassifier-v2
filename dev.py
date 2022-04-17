@@ -14,86 +14,67 @@ output_sizes = {
 }
 num_outputs = sum(output_sizes.values())
 
-def slice_output(x):
-    """ Slice the outputs for task. """
-    out = {}
-    c = 0
-    for k,v in output_sizes.items():
-        out[k] = x[..., c:c+v]
-        c += v
-    return out
+batch = 32
 
-
-batch = 4
-prediction_heads = 2
-num_outputs = 70
-
-x = torch.randn(batch, prediction_heads, num_outputs)
+logits = {}
+for k, v in output_sizes.items():
+    logits[k] = torch.randn(batch, v)
 target = torch.randint(low=0, high=10, size=(batch, len(output_sizes)), dtype=torch.float32)
 target[:, 0] = target[:, 0]>1
 target[:, 1] = torch.rand(batch)*360
-# print(f"{target=}")
-
-logits = slice_output(x)
-
-# prediction function
-# preds = {}
-# preds["has_target"] = torch.mean(torch.sigmoid(logits["has_target"]), dim=1)>0.5
-# phasor = torch.mean(torch.tanh(logits["angle"]), dim=1)
-# preds["angle"] = torch.rad2deg(torch.atan2(phasor[:,1], phasor[:,0]))
-# for idx, k in enumerate(["shape", "letter", "shape_color", "letter_color"]):
-#     v = logits[k]
-#     soft = torch.mean(torch.softmax(v, dim=2), dim=1)
-#     preds[k] = torch.argmax(soft, dim=1)
-
-# for idx, (k, p) in enumerate(preds.items()):
-#     if k=="has_target":
-#         t = target[:,0].long()
-#         acc = accuracy(p, t)
-#         print(f"{k} {acc=}")
-#     elif k=="angle":
-#         t = target[:,1]
-#         error = torch.mean(abs((t-p+900)%360-180))
-#         print(k, error)
-#     else:
-#         t = target[:, idx].long()
-#         acc = accuracy(p, t)
-#         print(f"{k} {acc=}")
+print(f"{target=}")
 
 
+def predictions(logits):
+    preds = {}
+    for k in output_sizes.keys():
+        if k=="has_target":
+            preds["has_target"] = (torch.sigmoid(logits["has_target"])>0.5).squeeze()
+        elif k=="angle":
+            phasor = F.normalize(torch.tanh(logits["angle"]), dim=1)
+            preds["angle"] = torch.rad2deg(torch.atan2(phasor[:,1], phasor[:,0]))
+        else:
+            preds[k] = torch.argmax(logits[k], dim=1)  # argmax of logits or softmax is the same index
+    return preds
+
+preds = predictions(logits)
+print(f"{preds=}")
+
+def custom_loss(logits, target):
+    losses = {}
+    mask = target[:,0]>0  # Only do the loss of the ones with targets
+    for idx, k in enumerate(output_sizes.keys()):
+        if k=="has_target":
+            losses[k] = nn.BCEWithLogitsLoss()(logits[k].squeeze(), target[:,0])
+        elif k=="angle":
+            phasor = torch.tanh(logits["angle"])
+            phasor_target = torch.stack([torch.cos(torch.deg2rad(target[:,1])), torch.sin(torch.deg2rad(target[:,1]))]).permute(1,0)
+            losses[k] = nn.MSELoss()(phasor[mask], phasor_target[mask]) if sum(mask)>0 else 0
+        else:
+            losses[k] = nn.CrossEntropyLoss()(logits[k][mask], target[:, idx][mask].long()) if sum(mask)>0 else 0
+    return losses
+
+losses = custom_loss(logits, target)
+# print(f"{losses=}")
+
+def calc_metrics(preds, target):
+    metrics = {}
+    mask = target[:,0]>0  # Only do the loss of the ones with targets
+    print(f"{mask=}")
+    for idx, (k,classes) in enumerate(output_sizes.items()):
+        if k=="angle":
+            error = abs((target[:,1]-preds[k]+900)%360-180)
+            metrics[f"{k}/error"] = torch.mean(error[mask]) if sum(mask)>0 else 0
+        else:
+            p = preds[k][mask]
+            t = target[:, idx][mask].long()
+            metrics[f"{k}/acc"] = accuracy(p, t) if sum(mask)>0 else 0
+            if classes>2:
+                precision, recall = precision_recall(p, t, num_classes=classes, average="macro", mdmc_average="global") if sum(mask)>0 else (0,0)
+                metrics[f"{k}/precision"] = precision
+                metrics[f"{k}/recall"] = recall
+    return metrics
 
 
-
-# pred = torch.argmax(logits, dim=1)
-# acc = accuracy(pred, target)
-# avg_precision, avg_recall = precision_recall(pred, target, num_classes=self.hparams.num_classes,
-#                                                 average="macro", mdmc_average="global")
-# weighted_f1 = f1_score(pred, target, num_classes=self.hparams.num_classes,
-#                     threshold=0.5, average="weighted")
-
-
-# print("target", target)
-
-# training loss function
-losses = {}
-bl = logits["has_target"].reshape(logits["has_target"].shape[0], prediction_heads)
-bt = target[:,0].unsqueeze(dim=1).repeat(1, prediction_heads)
-losses["has_target"] = nn.BCEWithLogitsLoss(reduction='none')(bl, bt)
-
-mask = target[:,0]>0 # Only do the loss of the ones with targets
-print(mask)
-
-al = F.normalize(torch.tanh(logits["angle"]), dim=2)
-cs = [torch.cos(torch.deg2rad(target[:,1])), torch.sin(torch.deg2rad(target[:,1]))]
-at = torch.stack(cs, dim=0).permute(1,0).repeat(1, 1, prediction_heads)
-at = at.reshape(al.shape[0], prediction_heads, 2)
-aa = torch.sum(nn.MSELoss(reduction='none')(al, at), dim=2)
-losses["angle"] = torch.sum(nn.MSELoss(reduction='none')(al, at), dim=2)[mask,...]
-
-
-for idx, k in enumerate(["shape", "letter", "shape_color", "letter_color"]):
-    t = target[:, idx+2].repeat(prediction_heads).reshape(logits[k].shape[0], prediction_heads)
-    l = logits[k].reshape(logits[k].shape[0], -1, prediction_heads)
-    losses[k] = nn.CrossEntropyLoss(reduction='none')(l, t.long())[mask,...]
-
-# print( losses )
+metrics = calc_metrics(preds, target)
+print(f"{metrics=}")

@@ -1,5 +1,6 @@
 import os
 import argparse
+from collections import Counter
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -8,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torchmetrics.functional import accuracy
+from torchmetrics.functional import accuracy, precision_recall
 from torchvision.transforms import Normalize
 import torchvision.transforms as T
 
@@ -65,7 +66,7 @@ class ClassifyModel(pl.LightningModule):
             quantize_to_int(self.hparams.feature_dim/2,8),
             quantize_to_int(self.hparams.feature_dim/1,8)
         ]
-        self.features =nn.Sequential(
+        self.features = nn.Sequential(
             Normalize(args.mean, args.std, inplace=True),
             nn.Conv2d(in_channels=3, out_channels=channels[0], kernel_size=5, stride=1, padding=2, bias=False),
             nn.BatchNorm2d(channels[0]),
@@ -78,81 +79,86 @@ class ClassifyModel(pl.LightningModule):
             nn.ReLU(),
             nn.Conv2d(in_channels=channels[2], out_channels=channels[3], kernel_size=3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(channels[3]),
-            nn.AdaptiveAvgPool2d((1,1))
+            nn.AdaptiveAvgPool2d((1,1)),
+            nn.Flatten(),
+            nn.Dropout(self.hparams.dropout)
         )
-        self.dropout = nn.Dropout(self.hparams.dropout)
-        self.fc = nn.Conv2d(quantize_to_int(self.hparams.feature_dim,8), self.hparams.num_outputs*self.hparams.prediction_heads, kernel_size=1, bias=True)
+        for idx, (k,v) in enumerate(self.hparams.output_sizes.items()):
+            setattr(self, k, nn.Linear(channels[3], v, bias=True))
         self.scheduler = None
+        self.detach = {key: False for key in self.hparams.output_sizes.keys()}
 
     def forward(self, x):
         """ Used for inference. """
-        x = self.features(x)
-        x = self.fc(x)
-        x = x.reshape(x.shape[0], self.hparams.prediction_heads, self.hparams.num_outputs)
-        logits = self.slice_output(x)
+        features = self.features(x)
+        logits = self.logits(features)
         preds = self.predictions(logits)
         return preds
 
-    def slice_output(self, x):
-        """ Slice the outputs for task. """
-        out = {}  # logits dim: batch, heads, outputs
-        c = 0
-        for k,v in self.hparams.output_sizes.items():
-            out[k] = x[..., c:c+v]
-            c += v
-        return out
+    def logits(self, features):
+        logits = {}
+        for k in self.hparams.output_sizes.keys():
+            # TODO : detach heads to stop gradients when task stops improving
+            logits[k] = eval("self."+k)(features)
+        return logits
 
     def predictions(self, logits):
         preds = {}
-        preds["has_target"] = torch.mean(torch.sigmoid(logits["has_target"]), dim=1)>0.5
-        phasor = torch.mean(torch.tanh(logits["angle"]), dim=1)
-        preds["angle"] = torch.rad2deg(torch.atan2(phasor[:,1], phasor[:,0]))
-        for idx, k in enumerate(["shape", "letter", "shape_color", "letter_color"]):
-            v = logits[k]
-            soft = torch.mean(torch.softmax(v, dim=2), dim=1)
-            preds[k] = torch.argmax(soft, dim=1)
+        for k in self.hparams.output_sizes.keys():
+            if k=="has_target":
+                preds["has_target"] = (torch.sigmoid(logits["has_target"])>0.5).squeeze()
+            elif k=="angle":
+                phasor = F.normalize(torch.tanh(logits["angle"]), dim=1)
+                preds["angle"] = torch.rad2deg(torch.atan2(phasor[:,1], phasor[:,0]))
+            else:
+                preds[k] = torch.argmax(logits[k], dim=1)  # argmax of logits or softmax is the same index
         return preds
 
     def custom_loss(self, logits, target):
-        """ Compute the loss from the logits() dictionary. 
-            Each task has a loss shape [batch, heads].
-        """
+        """ Compute the loss from the logits() dictionary. """
         losses = {}
-        bl = logits["has_target"].reshape(logits["has_target"].shape[0], self.hparams.prediction_heads)
-        bt = target[:,0].unsqueeze(dim=1).repeat(1, self.hparams.prediction_heads)
-        losses["has_target"] = nn.BCEWithLogitsLoss(reduction='none')(bl, bt)
-        al = F.normalize(torch.tanh(logits["angle"]), dim=2)
-        cs = [torch.cos(torch.deg2rad(target[:,1])), torch.sin(torch.deg2rad(target[:,1]))]
-        at = torch.stack(cs,dim=0).permute(1,0).repeat(1, 1, self.hparams.prediction_heads)
-        at = at.reshape(logits["angle"].shape[0], self.hparams.prediction_heads, 2)
-        losses["angle"] = torch.sum(nn.MSELoss(reduction='none')(al, at), dim=2)
-        for idx, k in enumerate(["shape", "letter", "shape_color", "letter_color"]):
-            t = target[:, idx+2].repeat(self.hparams.prediction_heads).reshape(logits[k].shape[0], self.hparams.prediction_heads)
-            l = logits[k].reshape(logits[k].shape[0], -1, self.hparams.prediction_heads)
-            losses[k] = nn.CrossEntropyLoss(reduction='none')(l, t.long())
+        mask = target[:,0]>0  # Only do the loss of the ones with targets
+        for idx, k in enumerate(self.hparams.output_sizes.keys()):
+            if k=="has_target":
+                losses[k] = nn.BCEWithLogitsLoss()(logits[k].squeeze(), target[:,0])
+            elif k=="angle":
+                phasor = torch.tanh(logits["angle"])
+                phasor_target = torch.stack([torch.cos(torch.deg2rad(target[:,1])), torch.sin(torch.deg2rad(target[:,1]))]).permute(1,0)
+                losses[k] = nn.MSELoss()(phasor[mask], phasor_target[mask]) if sum(mask)>0 else 0
+            else:
+                losses[k] = nn.CrossEntropyLoss()(logits[k][mask], target[:, idx][mask].long()) if sum(mask)>0 else 0
         return losses
+
+    def calc_metrics(self, preds, target):
+        metrics = {}
+        mask = target[:,0]>0  # Only do the loss of the ones with targets
+        for idx, (k,classes) in enumerate(self.hparams.output_sizes.items()):
+            if k=="angle":
+                error = abs((target[:,1]-preds[k]+900)%360-180)
+                metrics[f"{k}/error"] = torch.mean(error[mask]) if sum(mask)>0 else 0
+            else:
+                p = preds[k][mask]
+                t = target[:, idx][mask].long()
+                metrics[f"{k}/acc"] = accuracy(p, t) if sum(mask)>0 else 0
+                if classes>2:
+                    precision, recall = precision_recall(p, t, num_classes=classes, average="macro", mdmc_average="global") if sum(mask)>0 else (0,0)
+                    metrics[f"{k}/precision"] = precision
+                    metrics[f"{k}/recall"] = recall
+                    # TODO : add f1 score
+        return metrics
 
     def batch_step(self, batch):
         data, target = batch
-        x = self.features(data)
-        x = self.fc(x)
-        x = x.reshape(x.shape[0], self.hparams.prediction_heads, self.hparams.num_outputs)
-        logits = self.slice_output(x)
-        preds = self.predictions(logits)
+        features = self.features(data)
+        logits = self.logits(features)
         losses = self.custom_loss(logits, target)
-        metrics = {"loss": 0}
-        for idx, (k,v) in enumerate(losses.items()):
-            avg = torch.mean(v)  # Task average loss
-            # TODO: detach loss for tasks that are done training
-            metrics["loss"] += avg  # use this as the total training loss
-            metrics[f"{k}/loss"] = avg  # save loss each step
-            if k=="angle":
-                t = target[:,1]
-                metrics[f"{k}/error"] = torch.mean(abs((t-preds[k]+900)%360-180))
-            else:
-                t = target[:, idx].long()
-                metrics[f"{k}/acc"] = accuracy(preds[k], t)
-                # TODO : add precision, recall, f1
+        preds = self.predictions(logits)
+        metrics = self.calc_metrics(preds, target)
+        metrics["loss"] = 0
+        for k, task_loss in losses.items():
+            metrics[f"{k}/loss"] = task_loss
+            # TODO: weighted task loss
+            metrics["loss"] += task_loss  # add to the total computational graph
         return metrics
 
     def training_step(self, batch, batch_idx):
@@ -163,14 +169,22 @@ class ClassifyModel(pl.LightningModule):
         return metrics
     
     def training_epoch_end(self, outputs):
+        totals = dict(sum((Counter(dict(x)) for x in outputs), Counter()))
+        averages = {k: v/len(outputs) for k,v in totals.items()}
+
+        # print()
+        # for e in averages.items():
+        #     print(e)
         # TODO: check which tasks to stop training
+        # for k in self.detach.keys():
+
         # Log lr
         lr = self.optimizers().param_groups[0]['lr']
         self.logger.experiment.add_scalar('Learning Rate', lr, global_step=self.current_epoch)
         # Step scheduler
         if self.scheduler:
             if type(self.scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
-                self.scheduler.step(avg_loss)
+                self.scheduler.step(averages["loss"])
             elif type(self.scheduler) in [torch.optim.lr_scheduler.MultiStepLR, torch.optim.lr_scheduler.ExponentialLR]:
                 self.scheduler.step()
 
