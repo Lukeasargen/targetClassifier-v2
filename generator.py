@@ -242,7 +242,7 @@ class TargetGenerator():
             letter = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
             ox, oy = letter.size
             temp = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
-            temp.paste(letter, (cx-(ox//2), cy-(oy//36)-(oy//2)), letter)  # Put letter with offset based on size
+            temp.paste(letter, (cx-(ox//2), cy-(oy//2)), letter)  # Put letter with offset based on size
             target.alpha_composite(temp)  # removes the transparent aliasing border from the letter
         else:
             # Null labels for when there is no target
@@ -435,12 +435,12 @@ def time_dataloader(dataset, batch_size=64, max_num_workers=8):
 
 if __name__ == "__main__":
 
-    img_size = 40  # pixels, (input_size, input_size) or (width, height)
-    min_size = 28  # pixels
+    img_size = 32  # pixels, (input_size, input_size) or (width, height)
+    min_size = 24  # pixels
     alias_factor = 2  # generate higher resolution targets and downscale, improves aliasing effects
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
     backgrounds = None  # load_backgrounds('images/backgrounds')  # pil array
-    fill_prob = 0.5
+    fill_prob = 0.9
 
     generator = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
     # visualize_classify(generator)
@@ -463,5 +463,5 @@ if __name__ == "__main__":
 
     loader = DataLoader(dataset=dataset, batch_size=batch_size ,shuffle=shuffle,
         num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
-    # visualize_batch(loader)
+    visualize_batch(loader)
 

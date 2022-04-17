@@ -38,7 +38,6 @@ def get_args():
     parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float)
     # Model parameters
     parser.add_argument('--feature_dim', default=64, type=int)
-    parser.add_argument('--prediction_heads', default=1, type=int)
     parser.add_argument('--dropout', default=0.0, type=float)
     # Optimizer
     parser.add_argument('--epochs', default=20, type=int)
@@ -86,7 +85,7 @@ class ClassifyModel(pl.LightningModule):
         for idx, (k,v) in enumerate(self.hparams.output_sizes.items()):
             setattr(self, k, nn.Linear(channels[3], v, bias=True))
         self.scheduler = None
-        self.detach = {key: False for key in self.hparams.output_sizes.keys()}
+        self.sigma = nn.Parameter(torch.ones(len(self.hparams.output_sizes)))  # weighted loss, https://arxiv.org/abs/1705.07115
 
     def forward(self, x):
         """ Used for inference. """
@@ -154,18 +153,25 @@ class ClassifyModel(pl.LightningModule):
         losses = self.custom_loss(logits, target)
         preds = self.predictions(logits)
         metrics = self.calc_metrics(preds, target)
-        metrics["loss"] = 0
-        for k, task_loss in losses.items():
+        loss = 0
+        mask = target[:,0]>0
+        for i, (k, task_loss) in enumerate(losses.items()):
             metrics[f"{k}/loss"] = task_loss
-            # TODO: weighted task loss
-            metrics["loss"] += task_loss  # add to the total computational graph
+            if i==0:  # unsure how to scale BCE loss
+                loss += task_loss/10
+                # loss += (0.5*task_loss/self.sigma[i]**2.0) + torch.log(self.sigma[i])
+            if i==1:  # unsure how to scale phasor loss
+                loss += task_loss
+            elif i>1:
+                loss += nn.CrossEntropyLoss()(logits[k][mask]/self.sigma[i]**2.0, target[:, i][mask].long()) if sum(mask)>0 else 0
+            metrics[f"sigma/{k}"] = self.sigma[i]
+        metrics["loss"] = loss
         return metrics
 
     def training_step(self, batch, batch_idx):
         metrics = self.batch_step(batch)
         for k, v in metrics.items():
-            key = "{}".format(k)
-            self.log(key, v, on_step=True, on_epoch=True)
+            self.log(k, v, on_step=True, on_epoch=True)
         return metrics
     
     def training_epoch_end(self, outputs):
