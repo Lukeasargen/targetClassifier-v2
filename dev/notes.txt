@@ -22,38 +22,50 @@ New dataloader - 4x faster with 8 workers, and it uses way less memory
 3.07 seconds with 7 workers. 0.19 seconds per batch. 0.562 GB ram.
 2.43 seconds with 8 workers. 0.15 seconds per batch. 0.634 GB ram.
 --------------------------------------------------------------------------------
---seed=42 --name=classify --workers=4
-
-no backgrounds, classify stats
---mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862
+python classify.py 
+--seed=42 --name=classify --workers=4 --gpus=0
 
 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 
 --backgrounds=images/backgrounds
 
---epochs=1 --train_size=320 --batch=32
+dataset, no backgrounds, classify stats
+--mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862
 
 --feature_dim=64 --dropout=0.2
+
+--train_size=320 --batch=32 --epochs=1
 
 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov
 --opt=adam --lr=4e-3
 --opt=adamw --lr=4e-3 --weight_decay=5e-4
+--lr_warmup_steps=0
 --accumulate=1
+--grad_clip=value --clip_value=0.0
 
 --scheduler=step --milestones 10 15 --lr_gamma=0.1
---scheduler=exp --lr_gamma=0.9
---scheduler=plateau --lr_gamma=0.2 --plateau_patience=20
+--scheduler=exp --lr_gamma=0.95
+--scheduler=plateau --plateau_patience=20 --lr_gamma=0.2 --min_lr=1e-6
 --------------------------------------------------------------------------------
 todo
-scrap the single linear layer and just do multiple separate heads
-
+resnet backbone
+nfnet stem, regnet Y
+anti alias pooling
+saptial transformer to crop
+compare ST features to main features, add projection heads
 
 --------------------------------------------------------------------------------
 test commands
-python classify.py --seed=42 --name=classify --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --epochs=20 --train_size=320 --batch=32 --feature_dim=64 --scheduler=step --milestones 10 15 --lr_gamma=0.1
 
-python classify.py --seed=42 --name=classify --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.9 --epochs=100 --train_size=320 --batch=32 --feature_dim=64 --dropout=0.2 --scheduler=step --milestones 70 90 --lr_gamma=0.1
+v27 - no schedule
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=128 --dropout=0.2 --train_size=2560 --batch=128 --epochs=500 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --lr_warmup_steps=500
+v28 - no schedule, adamw
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=128 --dropout=0.2 --train_size=2560 --batch=128 --epochs=500 --opt=adamw --lr=4e-3 --weight_decay=1e-5 --lr_warmup_steps=500
+v29 - step --scheduler=step --milestones 300 450 --lr_gamma=0.1
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=128 --dropout=0.2 --train_size=2560 --batch=128 --epochs=500 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --lr_warmup_steps=500 --scheduler=step --milestones 300 450 --lr_gamma=0.1
+v30 - exp --scheduler=exp --lr_gamma=0.99
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=128 --dropout=0.2 --train_size=2560 --batch=128 --epochs=500 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --lr_warmup_steps=500 --scheduler=exp --lr_gamma=0.99
+v31 - plateau --scheduler=plateau --plateau_patience=50 --lr_gamma=0.5
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=128 --dropout=0.2 --train_size=2560 --batch=128 --epochs=500 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --lr_warmup_steps=500 --scheduler=plateau --plateau_patience=50 --lr_gamma=0.5
 
-python classify.py --name=classify --workers=6 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --epochs=400 --train_size=640 --batch=64 --feature_dim=128 --dropout=0.2 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --scheduler=plateau --lr_gamma=0.2 --plateau_patience=50
-
-python classify.py --name=classify --workers=4 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --img_size=32 --min_size=24 --alias_factor=2 --fill_prob=0.5 --epochs=1000 --train_size=1280 --batch=128 --feature_dim=128 --dropout=0.4 --opt=sgd --lr=4e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=256 --dropout=0.25 --train_size=2560 --batch=128 --epochs=2000 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --lr_warmup_steps=500 --scheduler=plateau --plateau_patience=50 --lr_gamma=0.5 --min_lr=1e-6
 

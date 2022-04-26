@@ -8,6 +8,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, ExponentialLR
 from torch.utils.data import DataLoader
 from torchmetrics.functional import accuracy, precision_recall
 from torchvision.transforms import Normalize
@@ -20,38 +21,45 @@ from util import AddGaussianNoise, CustomTransformation
 def get_args():
     parser = argparse.ArgumentParser()
     # Init and setup
-    parser.add_argument('--seed', type=int)
-    parser.add_argument('--name', default='classify', type=str)
-    parser.add_argument('--workers', default=0, type=int)
-    parser.add_argument('--ngpu', default=1, type=int)
-    parser.add_argument('--benchmark', default=False, action='store_true')
-    parser.add_argument('--precision', default=32, type=int, choices=[16, 32])
+    parser.add_argument('--seed', default=42, type=int, help="int. default=42. deterministic seed. cudnn.deterministic is always set True by deafult.")
+    parser.add_argument('--name', default='classify', type=str, help="str. default=classify. Tensorboard name and log folder name.")
+    parser.add_argument('--workers', default=0, type=int, help="int. default=0. Dataloader num_workers. good practice is to use number of cpu cores.")
+    parser.add_argument('--gpus', nargs="+", default=None, type=int, help="str. default=None (cpu). gpus to train on. see pl multi_gpu docs for details.")
+    parser.add_argument('--benchmark', default=False, action='store_true', help="store_true. set cudnn.benchmark.")
+    parser.add_argument('--precision', default=32, type=int, choices=[16, 32], help="int. default=32. 32 for full precision and 16 uses pytorch amp")
     # Dataset
-    parser.add_argument('--train_size', default=320, type=int)
-    parser.add_argument('--img_size', default=32, type=int)
-    parser.add_argument('--min_size', default=20, type=int)
-    parser.add_argument('--alias_factor', default=2.0, type=float)
-    parser.add_argument('--backgrounds', default=None, type=str)
-    parser.add_argument('--fill_prob', default=0.5, type=float)
-    parser.add_argument('--batch', default=16, type=int)
-    parser.add_argument('--mean', nargs=3, default=[0.485, 0.456, 0.406], type=float)
-    parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float)
+    parser.add_argument('--img_size', default=32, type=int, help="int. default=32. input size in pixels.")
+    parser.add_argument('--min_size', default=20, type=int, help="int. default=20. smallest target size in pixels.")
+    parser.add_argument('--alias_factor', default=2.0, type=float, help="float. default=2.0. generate higher resolution images and downscale to help with aliasing.")
+    parser.add_argument('--backgrounds', default=None, type=str, help="str. Path to folder with backgrounds images.")
+    parser.add_argument('--fill_prob', default=0.5, type=float, help="float. percentage of images that have targets.")
+    parser.add_argument('--mean', nargs=3, default=[0.485, 0.456, 0.406], type=float, help="3 floats. default is imagenet [0.485, 0.456, 0.406].")
+    parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float, help="3 floats, default is imagenet [0.229, 0.224, 0.225].")
     # Model parameters
-    parser.add_argument('--feature_dim', default=64, type=int)
-    parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--feature_dim', default=64, type=int, help="int. default=64. Dimension of final embedding.")
+    parser.add_argument('--dropout', default=0.0, type=float, help="float. default=0.0. Dropout is used on the final embeddings.")
+    # Training hyperparameter
+    parser.add_argument('--train_size', default=320, type=int, help="int. default=320. number of images in 1 epoch.")
+    parser.add_argument('--batch', default=16, type=int, help="int. default=1. batch size.")
+    parser.add_argument('--epochs', default=10, type=int, help="int. deafult=10. number of epochs")
     # Optimizer
-    parser.add_argument('--epochs', default=20, type=int)
-    parser.add_argument('--opt', default='adam', type=str, choices=['sgd', 'adam', 'adamw'])
+    parser.add_argument('--opt', default='adam', type=str, choices=['sgd', 'adam', 'adamw'], help="str. default=adam. use sgd, adam, or adamw.")
     parser.add_argument('--lr', default=4e-3, type=float)
-    parser.add_argument('--momentum', default=0.9, type=float)
-    parser.add_argument('--nesterov', default=False, action='store_true')
-    parser.add_argument('--weight_decay', default=0.0, type=float)
-    parser.add_argument('--accumulate', default=1, type=int)
+    parser.add_argument('--momentum', default=0.9, type=float, help="float. default=0.9. sgd momentum value.")
+    parser.add_argument('--nesterov', default=False, action='store_true', help="store_true. sgd with nestrov acceleration.")
+    parser.add_argument('--weight_decay', default=0.0, type=float, help="float. default=0.0. weight decay for sgd and adamw. 0=no weight decay.")
+    parser.add_argument('--adam_b1', default=0.9, type=float)
+    parser.add_argument('--adam_b2', default=0.999, type=float)
+    parser.add_argument('--lr_warmup_steps', default=0, type=int, help="int. deafult=0. linearly increase learning rate for this number of steps.")
+    parser.add_argument('--accumulate', default=1, type=int, help="int. default=1. number of gradient accumulation steps. simulate larger batches when >1.")
+    parser.add_argument('--grad_clip', default='value', type=str, choices=['value', 'norm'], help="str. default=value. pl uses clip_grad_value_ and clip_grad_norm_ from nn.utils.")
+    parser.add_argument('--clip_value', default=0, type=float, help="float. default=0 is no clipping.")
     # Scheduler
-    parser.add_argument('--scheduler', default=None, type=str, choices=['step', 'exp', 'plateau'])
-    parser.add_argument('--lr_gamma', default=0.2, type=float)
-    parser.add_argument('--milestones', nargs='+', default=[10, 15], type=int)
-    parser.add_argument('--plateau_patience', default=20, type=int)
+    parser.add_argument('--scheduler', default=None, type=str, choices=['step', 'plateau', 'exp', 'cosine', 'one_cycle'], help="str. default=None. use step, plateau, exp, or cosine schedulers.")
+    parser.add_argument('--lr_gamma', default=0.1, type=float, help="float. default=0.1. gamma for schedulers that scale the learning rate.")
+    parser.add_argument('--milestones', nargs='+', default=[10, 15], type=int, help="ints. step scheduler milestones.")
+    parser.add_argument('--plateau_patience', default=20, type=int, help="int. plateau scheduler patience. monitoring the train loss.")
+    parser.add_argument('--min_lr', default=0.0, type=float, help="float. default=0.0. minimum learning rate set by Plateau scheduler.")
     args = parser.parse_args()
     return args
 
@@ -84,7 +92,8 @@ class ClassifyModel(pl.LightningModule):
         )
         for idx, (k,v) in enumerate(self.hparams.output_sizes.items()):
             setattr(self, k, nn.Linear(channels[3], v, bias=True))
-        self.scheduler = None
+        self.scheduler = None  # Set in configure_optimizers()
+        self.opt_init_lr = None  # Set in configure_optimizers()
         self.sigma = nn.Parameter(torch.ones(len(self.hparams.output_sizes)))  # weighted loss, https://arxiv.org/abs/1705.07115
 
     def forward(self, x):
@@ -115,21 +124,32 @@ class ClassifyModel(pl.LightningModule):
 
     def custom_loss(self, logits, target):
         """ Compute the loss from the logits() dictionary. """
-        losses = {}
-        mask = target[:,0]>0  # Only do the loss of the ones with targets
-        for idx, k in enumerate(self.hparams.output_sizes.keys()):
-            if k=="has_target":
-                losses[k] = nn.BCEWithLogitsLoss()(logits[k].squeeze(), target[:,0])
-            elif k=="angle":
-                phasor = torch.tanh(logits["angle"])
-                phasor_target = torch.stack([torch.cos(torch.deg2rad(target[:,1])), torch.sin(torch.deg2rad(target[:,1]))]).permute(1,0)
-                losses[k] = nn.MSELoss()(phasor[mask], phasor_target[mask]) if sum(mask)>0 else 0
-            else:
-                losses[k] = nn.CrossEntropyLoss()(logits[k][mask], target[:, idx][mask].long()) if sum(mask)>0 else 0
-        return losses
-
-    def calc_metrics(self, preds, target):
+        loss = 0  # Total training loss
         metrics = {}
+        mask = target[:,0]>0  # Only do the loss of the ones with targets
+        for i, k in enumerate(self.hparams.output_sizes.keys()):
+            if k=="has_target":
+                task_loss = nn.BCEWithLogitsLoss()(logits[k].squeeze(), target[:,0])
+                # TODO unsure how to scale BCE loss
+                loss += task_loss
+            elif k=="angle":
+                phasor = F.normalize(torch.tanh(logits["angle"]), dim=1)
+                phasor_target = torch.stack([torch.cos(torch.deg2rad(target[:,1])), torch.sin(torch.deg2rad(target[:,1]))]).permute(1,0)
+                task_loss = nn.MSELoss()(phasor[mask], phasor_target[mask]) if sum(mask)>0 else 0
+                # TODO unsure how to scale MSE loss
+                loss += task_loss
+                # loss += (task_loss/(2*self.sigma[i]**2)) + torch.log(1+self.sigma[i]**2)
+            else:
+                task_loss = nn.CrossEntropyLoss()(logits[k][mask], target[:, i][mask].long()) if sum(mask)>0 else 0
+                # loss += task_loss
+                loss += nn.CrossEntropyLoss()(logits[k][mask]/self.sigma[i]**2.0, target[:, i][mask].long()) if sum(mask)>0 else 0
+
+            metrics[f"{k}/loss"] = task_loss
+            metrics[f"sigma/{k}"] = self.sigma[i]
+        metrics["loss"] = loss
+        return metrics
+
+    def add_metrics(self, metrics, preds, target):
         mask = target[:,0]>0  # Only do the loss of the ones with targets
         for idx, (k,classes) in enumerate(self.hparams.output_sizes.items()):
             if k=="angle":
@@ -139,39 +159,39 @@ class ClassifyModel(pl.LightningModule):
                 p = preds[k][mask]
                 t = target[:, idx][mask].long()
                 metrics[f"{k}/acc"] = accuracy(p, t) if sum(mask)>0 else 0
+                # TODO : add f1 score
                 if classes>2:
                     precision, recall = precision_recall(p, t, num_classes=classes, average="macro", mdmc_average="global") if sum(mask)>0 else (0,0)
                     metrics[f"{k}/precision"] = precision
                     metrics[f"{k}/recall"] = recall
-                    # TODO : add f1 score
         return metrics
 
     def batch_step(self, batch):
         data, target = batch
         features = self.features(data)
         logits = self.logits(features)
-        losses = self.custom_loss(logits, target)
+        metrics = self.custom_loss(logits, target)
         preds = self.predictions(logits)
-        metrics = self.calc_metrics(preds, target)
-        loss = 0
-        mask = target[:,0]>0
-        for i, (k, task_loss) in enumerate(losses.items()):
-            metrics[f"{k}/loss"] = task_loss
-            if i==0:  # unsure how to scale BCE loss
-                loss += task_loss/10
-                # loss += (0.5*task_loss/self.sigma[i]**2.0) + torch.log(self.sigma[i])
-            if i==1:  # unsure how to scale phasor loss
-                loss += task_loss
-            elif i>1:
-                loss += nn.CrossEntropyLoss()(logits[k][mask]/self.sigma[i]**2.0, target[:, i][mask].long()) if sum(mask)>0 else 0
-            metrics[f"sigma/{k}"] = self.sigma[i]
-        metrics["loss"] = loss
+        metrics = self.add_metrics(metrics, preds, target)
         return metrics
 
     def training_step(self, batch, batch_idx):
         metrics = self.batch_step(batch)
+
+        # Update tensorboard for each train step
         for k, v in metrics.items():
             self.log(k, v, on_step=True, on_epoch=True)
+
+        # Update the lr during warmup
+        """ Code from https://pytorch-lightning.readthedocs.io/en/latest/common/optimizers.html
+            Except I didn't override optimizer_step() bc that would break gradient accumulation.
+        """
+        if self.trainer.global_step < self.hparams.lr_warmup_steps:
+            opt = self.optimizers()
+            lr_scale = min(1, float(self.trainer.global_step+1)/self.hparams.lr_warmup_steps)
+            for pg, init_lr in zip(opt.param_groups, self.opt_init_lr):
+                pg['lr'] = lr_scale*init_lr
+
         return metrics
     
     def training_epoch_end(self, outputs):
@@ -187,12 +207,13 @@ class ClassifyModel(pl.LightningModule):
         # Log lr
         lr = self.optimizers().param_groups[0]['lr']
         self.logger.experiment.add_scalar('Learning Rate', lr, global_step=self.current_epoch)
-        # Step scheduler
-        if self.scheduler:
-            if type(self.scheduler) == torch.optim.lr_scheduler.ReduceLROnPlateau:
+
+        # Step these schedulers every epoch
+        if type(self.scheduler) in [MultiStepLR, ExponentialLR]:
+            self.scheduler.step()
+        elif self.trainer.global_step >= self.hparams.lr_warmup_steps:
+            if type(self.scheduler) in [ReduceLROnPlateau]:
                 self.scheduler.step(averages["loss"])
-            elif type(self.scheduler) in [torch.optim.lr_scheduler.MultiStepLR, torch.optim.lr_scheduler.ExponentialLR]:
-                self.scheduler.step()
 
     def configure_optimizers(self):
         """https://discuss.pytorch.org/t/weight-decay-in-the-optimizers-is-a-bad-idea-especially-with-batchnorm/16994/3"""
@@ -214,19 +235,31 @@ class ClassifyModel(pl.LightningModule):
             params = self.parameters()
 
         if self.hparams.opt == 'sgd':
-            optimizer = torch.optim.SGD(params, lr=self.hparams.lr, momentum=self.hparams.momentum,
-                            nesterov=self.hparams.nesterov)
+            optimizer = torch.optim.SGD(params, lr=self.hparams.lr, momentum=self.hparams.momentum,nesterov=self.hparams.nesterov)
         elif self.hparams.opt == 'adam':
-            optimizer = torch.optim.Adam(params, lr=self.hparams.lr)
+            optimizer = torch.optim.Adam(params, lr=self.hparams.lr, betas=(self.hparams.adam_b1, self.hparams.adam_b2))
         elif self.hparams.opt == 'adamw':
-            optimizer = torch.optim.AdamW(params, lr=self.hparams.lr)
+            optimizer = torch.optim.AdamW(params, lr=self.hparams.lr, betas=(self.hparams.adam_b1, self.hparams.adam_b2))
+
+        # Keep a copy of the initial lr for each group because this will get overwritten during warmup steps
+        self.opt_init_lr = [pg['lr'] for pg in optimizer.param_groups]
 
         if self.hparams.scheduler == 'step':
-            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=self.hparams.milestones, gamma=self.hparams.lr_gamma)
+            self.scheduler = MultiStepLR(
+                optimizer,
+                milestones=self.hparams.milestones,
+                gamma=self.hparams.lr_gamma)
         elif self.hparams.scheduler == 'plateau':
-            self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=self.hparams.lr_gamma, patience=self.hparams.plateau_patience, verbose=False)
+            self.scheduler = ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=self.hparams.lr_gamma,
+                patience=self.hparams.plateau_patience,
+                min_lr=self.hparams.min_lr)
         elif self.hparams.scheduler == 'exp':
-            self.scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.hparams.lr_gamma)
+            self.scheduler = ExponentialLR(
+                optimizer,
+                gamma=self.hparams.lr_gamma)
 
         return optimizer
 
@@ -282,7 +315,9 @@ if __name__ == "__main__":
         # callbacks=callbacks,
         # check_val_every_n_epoch=args.val_interval,
         deterministic=True,  # cudnn.deterministic
-        gpus=args.ngpu,
+        gpus=args.gpus,
+        gradient_clip_algorithm=args.grad_clip,
+        gradient_clip_val=args.clip_value,
         logger=logger,
         precision=args.precision,
         progress_bar_refresh_rate=1,
