@@ -77,7 +77,7 @@ class ClassifyModel(pl.LightningModule):
             quantize_to_int(self.hparams.feature_dim/1,8)
         ]
         self.features = nn.Sequential(
-            Normalize(args.mean, args.std, inplace=True),
+            Normalize(self.hparams.mean, self.hparams.std, inplace=True),
             nn.Conv2d(in_channels=3, out_channels=channels[0], kernel_size=5, stride=1, padding=2, bias=False),
             nn.BatchNorm2d(channels[0]),
             nn.ReLU(),
