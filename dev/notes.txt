@@ -61,11 +61,16 @@ nfnet stem, regnet Y
 anti alias pooling
 gelu
 
-saptial transformer to crop
+spatial transformer to crop
 compare ST features to main features, add projection heads
+
+output the sigmoid for has_target, calibrate using real images
 
 stop training task after threshold, (eg >99% has_target)
 set max size in load_backgrounds to resize and save space
+
+non linear classifier heads
+spatial pyramidal pooling, deep layer aggregation (deeplabv3)
 
 --------------------------------------------------------------------------------
 test commands
@@ -99,6 +104,9 @@ v7 - increase input size to 40
 python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=40 --min_size=28 --alias_factor=2 --fill_prob=0.5 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --feature_dim=256 --dropout=0.1 --train_size=12800 --batch=128 --epochs=200 --opt=sgd --lr=4e-2 --weight_decay=1e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 170 190 --lr_gamma=0.1
 
 large input hurt only the letter and shape accuracy for this model
+
+v8 - fixed the angle labels
+python classify.py --seed=42 --name=classify --workers=6 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --feature_dim=256 --dropout=0.1 --train_size=12800 --batch=128 --epochs=150 --opt=sgd --lr=6e-2 --weight_decay=4e-5 --momentum=0.92 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 100 120 140 --lr_gamma=0.5
 
 
 after this actually make a better model

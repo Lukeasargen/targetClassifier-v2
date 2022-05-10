@@ -117,10 +117,10 @@ class ClassifyModel(pl.LightningModule):
         preds = {}
         for k in self.hparams.output_sizes.keys():
             if k=="has_target":
-                preds["has_target"] = (torch.sigmoid(logits["has_target"])>0.5).squeeze()
+                preds["has_target"] = torch.sigmoid(logits["has_target"]).squeeze()
             elif k=="angle":
-                phasor = F.normalize(torch.tanh(logits["angle"]), dim=1)
-                preds["angle"] = torch.rad2deg(torch.atan2(phasor[:,1], phasor[:,0]))
+                # NOTE : angle output is a phasor, Atan2 is not supported in ONNX
+                preds["angle"] = F.normalize(torch.tanh(logits["angle"]), dim=1)
             else:
                 preds[k] = torch.argmax(logits[k], dim=1)  # argmax of logits or softmax is the same index
         return preds
@@ -133,14 +133,14 @@ class ClassifyModel(pl.LightningModule):
         for i, k in enumerate(self.hparams.output_sizes.keys()):
             if k=="has_target":
                 task_loss = nn.BCEWithLogitsLoss()(logits[k].squeeze(), target[:,0])
-                # TODO unsure how to scale BCE loss
-                loss += task_loss
+                loss += task_loss # TODO unsure how to scale BCE loss
             elif k=="angle":
                 phasor = F.normalize(torch.tanh(logits["angle"]), dim=1)
-                phasor_target = torch.stack([torch.cos(torch.deg2rad(target[:,1])), torch.sin(torch.deg2rad(target[:,1]))]).permute(1,0)
+                x = torch.sin(torch.deg2rad(target[:,1]))
+                y = torch.cos(torch.deg2rad(target[:,1]))
+                phasor_target = torch.stack([x, y]).permute(1,0)          
                 task_loss = nn.MSELoss()(phasor[mask], phasor_target[mask]) if sum(mask)>0 else 0
-                # TODO unsure how to scale MSE loss
-                loss += task_loss
+                loss += task_loss  # TODO unsure how to scale MSE loss
                 # loss += (task_loss/(2*self.sigma[i]**2)) + torch.log(1+self.sigma[i]**2)
             else:
                 task_loss = nn.CrossEntropyLoss()(logits[k][mask], target[:, i][mask].long()) if sum(mask)>0 else 0
@@ -157,9 +157,12 @@ class ClassifyModel(pl.LightningModule):
         mask = target[:,0]>0  # Only do the loss of the ones with targets
         for idx, (k,classes) in enumerate(self.hparams.output_sizes.items()):
             if k=="angle":
-                error = abs((target[:,1]-preds[k]+900)%360-180)
+                x, y = preds[k][:,0], preds[k][:,1]
+                angles = torch.rad2deg(torch.atan2(x, y))
+                error = abs((target[:,1]-angles+900)%360-180)
                 metrics[f"{k}/error"] = torch.mean(error[mask]) if sum(mask)>0 else 0
             else:
+                if k=="has_target": preds[k] = preds[k]>0.5
                 p = preds[k][mask]
                 t = target[:, idx][mask].long()
                 metrics[f"{k}/acc"] = accuracy(p, t) if sum(mask)>0 else 0
