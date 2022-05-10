@@ -201,7 +201,7 @@ class TargetGenerator():
                 points.append( (c*ratio*np.sin((step*i + step/2) + np.radians(-angle))) + cy )
             draw.polygon(points, fill=shape_color)
             ltr_size = int(c*ratio*np.random.randint(90, 95) / 100)
-        return (cx, cy), ltr_size, angle
+        return (cx, cy), ltr_size
 
     def draw_letter(self, draw, ltr_size, ltr_idx, ltr_color_idx):
         """ Do not use. this is called within draw_target.
@@ -215,8 +215,9 @@ class TargetGenerator():
         img = Image.new("RGBA", (w, h), color=(0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         draw.text((0,0), self.letter_options[ltr_idx], fill=letter_color, font=font)
-        img = img.rotate(np.random.uniform(0, 360), expand=1)
-        return img
+        angle = np.random.uniform(0, 360)  # Rotate each letter randomly.
+        img = img.rotate(angle, expand=1)  # This rotates CCW, so 360-angle is the CW angle
+        return img, 360-angle
 
     def draw_target(self, img_size, min_size, fill_prob=1.0, transparent_bkg=False):
         """ Draws a random target on a transparent PIL image. Also returns the correct labels. """
@@ -231,8 +232,8 @@ class TargetGenerator():
             shp_idx = np.random.randint(0, len(self.shape_options))
             ltr_idx = np.random.randint(0, len(self.letter_options))
             # Drawing puts the shape directly on the PIL image. Outputs are the center of the shape and the max letter size in pixels
-            (cx, cy), ltr_size, angle = self.draw_shape(draw, img_size, min_size, shp_idx, shp_color_idx)
-            letter = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
+            (cx, cy), ltr_size = self.draw_shape(draw, img_size, min_size, shp_idx, shp_color_idx)
+            letter, angle = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
             ox, oy = letter.size
             temp = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
             temp.paste(letter, (cx-(ox//2), cy-(oy//2)), letter)  # Put letter with offset based on size
@@ -429,10 +430,10 @@ def time_dataloader(dataset, batch_size=64, max_num_workers=8):
 if __name__ == "__main__":
 
     img_size = 32  # pixels, (input_size, input_size) or (width, height)
-    min_size = 26  # pixels
+    min_size = 28  # pixels
     alias_factor = 2  # generate higher resolution targets and downscale, improves aliasing effects
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
-    backgrounds = r'C:\Users\lukeasargen\projects\aerial_backgrounds'
+    backgrounds = None  # r'C:\Users\lukeasargen\projects\aerial_backgrounds'
     fill_prob = 0.9
 
     backgrounds = load_backgrounds(backgrounds)
