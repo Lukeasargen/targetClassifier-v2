@@ -1,3 +1,6 @@
+import os
+import time
+
 import numpy as np
 from PIL import Image, ImageFilter
 import torch
@@ -8,6 +11,14 @@ def pil_loader(path):
     with open(path, 'rb') as f:
         img = Image.open(f)
         return img.convert('RGB')
+
+def load_backgrounds(folder_path):
+    if folder_path==None: return None
+    print(" * Loading backgrounds...")
+    ts = time.time()
+    backgrounds = [pil_loader(os.path.join(os.getcwd(), x)) for x in os.scandir(folder_path)]
+    print(f" ** Backgrounds loaded. {time.time()-ts:.03f} seconds for {len(backgrounds)} images.")
+    return backgrounds
 
 def quantize_to_int(x, q=8):
     """ Make interger divisible by q, but never smaller than q. """    

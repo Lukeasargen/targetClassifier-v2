@@ -1,3 +1,7 @@
+cd projects
+cd targetClassifier-v2
+conda activate uas_vision
+
 tensorboard --logdir logs/
 --------------------------------------------------------------------------------
 Old dataloader
@@ -30,6 +34,8 @@ python classify.py
 
 dataset, no backgrounds, classify stats
 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862
+half google and half dota backgrounds
+--mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378
 
 --feature_dim=64 --dropout=0.2
 
@@ -45,13 +51,21 @@ dataset, no backgrounds, classify stats
 --scheduler=step --milestones 10 15 --lr_gamma=0.1
 --scheduler=exp --lr_gamma=0.95
 --scheduler=plateau --plateau_patience=20 --lr_gamma=0.2 --min_lr=1e-6
+
+--weighted_loss
 --------------------------------------------------------------------------------
 todo
+better model
 resnet backbone
 nfnet stem, regnet Y
 anti alias pooling
+gelu
+
 saptial transformer to crop
 compare ST features to main features, add projection heads
+
+stop training task after threshold, (eg >99% has_target)
+set max size in load_backgrounds to resize and save space
 
 --------------------------------------------------------------------------------
 test commands
@@ -68,4 +82,24 @@ v31 - plateau --scheduler=plateau --plateau_patience=50 --lr_gamma=0.5
 python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=128 --dropout=0.2 --train_size=2560 --batch=128 --epochs=500 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --lr_warmup_steps=500 --scheduler=plateau --plateau_patience=50 --lr_gamma=0.5
 
 python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862 --feature_dim=256 --dropout=0.25 --train_size=2560 --batch=128 --epochs=2000 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov --lr_warmup_steps=500 --scheduler=plateau --plateau_patience=50 --lr_gamma=0.5 --min_lr=1e-6
+
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --feature_dim=128 --dropout=0.0 --train_size=16384 --batch=256 --epochs=72 --opt=sgd --lr=6e-2 --weight_decay=5e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1472 --scheduler=step --milestones 62 68 --lr_gamma=0.1 --weighted_loss
+v2 - no weight
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --feature_dim=128 --dropout=0.0 --train_size=3200 --batch=128 --epochs=100 --opt=sgd --lr=4e-2 --weight_decay=1e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 80 90 --lr_gamma=0.1
+v3 - weighted
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --feature_dim=128 --dropout=0.0 --train_size=3200 --batch=128 --epochs=100 --opt=sgd --lr=4e-2 --weight_decay=1e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 80 90 --lr_gamma=0.1 --weighted_loss
+
+v4 - v3 but multiply by sigma also
+v5 - v2 with dropout=0.25
+
+v6 - long training to see how the tasks improve
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.5 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --feature_dim=256 --dropout=0.1 --train_size=12800 --batch=128 --epochs=250 --opt=sgd --lr=5e-2 --weight_decay=1e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 150 200 --lr_gamma=0.1
+
+v7 - increase input size to 40
+python classify.py --seed=42 --name=classify --workers=4 --gpus=0 --img_size=40 --min_size=28 --alias_factor=2 --fill_prob=0.5 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --feature_dim=256 --dropout=0.1 --train_size=12800 --batch=128 --epochs=200 --opt=sgd --lr=4e-2 --weight_decay=1e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 170 190 --lr_gamma=0.1
+
+large input hurt only the letter and shape accuracy for this model
+
+
+after this actually make a better model
 

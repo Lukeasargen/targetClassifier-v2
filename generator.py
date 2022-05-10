@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as T
 
-from util import pil_loader
+from util import load_backgrounds
 from util import AddGaussianNoise, CustomTransformation
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'  # draw.polygon raised an error
@@ -54,13 +54,6 @@ def make_regular_polygon(radius, sides, angle, center=(0,0)):
         points.append( (radius*np.cos((step*i) + np.radians(angle))) + center[0] )
         points.append( (radius*np.sin((step*i) + np.radians(angle))) + center[1] )
     return points
-
-def load_backgrounds(folder_path):
-    print(" * Loading backgrounds...")
-    ts = time.time()
-    backgrounds = [pil_loader(os.path.join(os.getcwd(), x)) for x in os.scandir(folder_path)]
-    print(f" ** Backgrounds loaded. {time.time()-ts:.03f} seconds for {len(backgrounds)} images.")
-    return backgrounds
 
 class TargetGenerator():
     def __init__(self, img_size, min_size, alias_factor=1, target_transforms=None, backgrounds=None):
@@ -285,7 +278,7 @@ class TargetGenerator():
         target, label = self.draw_target(img_size, min_size, fill_prob)
         if self.backgrounds is not None:
             bkg = self.get_background()
-            img = T.RandomResizedCrop((self.alias_factor*img_size[1], self.alias_factor*img_size[0]), scale=(0.08, 1.0), ratio=(3./4., 4./3.))(bkg)
+            img = T.RandomResizedCrop((int(self.alias_factor*img_size[1]), int(self.alias_factor*img_size[0])), scale=(0.08, 1.0), ratio=(3./4., 4./3.))(bkg)
             img.paste(target, None, target)  # Alpha channel is the mask
         else:
             # If there are no backgrounds, draw_target puts a random color.
@@ -333,7 +326,7 @@ class TargetGenerator():
         mask.alpha_composite(place_targets)  # Removes the transparent aliasing border from the mask
         if self.backgrounds is not None:
             bkg = self.get_background()
-            img = T.RandomResizedCrop((self.alias_factor*img_size[1], self.alias_factor*img_size[0]), scale=(0.08, 1.0), ratio=(3./4., 4./3.))(bkg)
+            img = T.RandomResizedCrop((int(self.alias_factor*img_size[1]), int(self.alias_factor*img_size[0])), scale=(0.08, 1.0), ratio=(3./4., 4./3.))(bkg)
             img.paste(mask, None, mask)  # Alpha channel is the mask
         else:
             img = mask.convert("RGB")  # Return the mask in rgb
@@ -436,12 +429,13 @@ def time_dataloader(dataset, batch_size=64, max_num_workers=8):
 if __name__ == "__main__":
 
     img_size = 32  # pixels, (input_size, input_size) or (width, height)
-    min_size = 24  # pixels
+    min_size = 26  # pixels
     alias_factor = 2  # generate higher resolution targets and downscale, improves aliasing effects
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
-    backgrounds = None  # load_backgrounds('images/backgrounds')  # pil array
+    backgrounds = r'C:\Users\lukeasargen\projects\aerial_backgrounds'
     fill_prob = 0.9
 
+    backgrounds = load_backgrounds(backgrounds)
     generator = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
     # visualize_classify(generator)
     # visualize_segment(generator)
@@ -459,9 +453,9 @@ if __name__ == "__main__":
 
     dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
     # dataset_stats(dataset, num=1000)
-    # time_dataloader(dataset, batch_size=64, max_num_workers=8)
+    # time_dataloader(dataset, batch_size=256, max_num_workers=8)
 
     loader = DataLoader(dataset=dataset, batch_size=batch_size ,shuffle=shuffle,
         num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
-    visualize_batch(loader)
+    # visualize_batch(loader)
 

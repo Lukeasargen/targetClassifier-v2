@@ -14,8 +14,8 @@ from torchmetrics.functional import accuracy, precision_recall
 from torchvision.transforms import Normalize
 import torchvision.transforms as T
 
-from generator import load_backgrounds, LiveClassifyDataset
-from util import quantize_to_int
+from generator import LiveClassifyDataset
+from util import load_backgrounds, quantize_to_int
 from util import AddGaussianNoise, CustomTransformation
 
 def get_args():
@@ -60,6 +60,9 @@ def get_args():
     parser.add_argument('--milestones', nargs='+', default=[10, 15], type=int, help="ints. step scheduler milestones.")
     parser.add_argument('--plateau_patience', default=20, type=int, help="int. plateau scheduler patience. monitoring the train loss.")
     parser.add_argument('--min_lr', default=0.0, type=float, help="float. default=0.0. minimum learning rate set by Plateau scheduler.")
+    # Other
+    parser.add_argument('--weighted_loss', default=False, action='store_true', help="store_true. use the uncertainty weighted loss.")
+    
     args = parser.parse_args()
     return args
 
@@ -141,9 +144,10 @@ class ClassifyModel(pl.LightningModule):
                 # loss += (task_loss/(2*self.sigma[i]**2)) + torch.log(1+self.sigma[i]**2)
             else:
                 task_loss = nn.CrossEntropyLoss()(logits[k][mask], target[:, i][mask].long()) if sum(mask)>0 else 0
-                # loss += task_loss
-                loss += nn.CrossEntropyLoss()(logits[k][mask]/self.sigma[i]**2.0, target[:, i][mask].long()) if sum(mask)>0 else 0
-
+                if self.hparams.weighted_loss:
+                    loss += nn.CrossEntropyLoss()(logits[k][mask]/self.sigma[i]**2.0, target[:, i][mask].long()) if sum(mask)>0 else 0
+                else:
+                    loss += task_loss
             metrics[f"{k}/loss"] = task_loss
             metrics[f"sigma/{k}"] = self.sigma[i]
         metrics["loss"] = loss
@@ -159,6 +163,7 @@ class ClassifyModel(pl.LightningModule):
                 p = preds[k][mask]
                 t = target[:, idx][mask].long()
                 metrics[f"{k}/acc"] = accuracy(p, t) if sum(mask)>0 else 0
+                metrics[f"acc/{k}"] = metrics[f"{k}/acc"]
                 # TODO : add f1 score
                 if classes>2:
                     precision, recall = precision_recall(p, t, num_classes=classes, average="macro", mdmc_average="global") if sum(mask)>0 else (0,0)
@@ -266,7 +271,7 @@ class ClassifyModel(pl.LightningModule):
 if __name__ == "__main__":
     args = get_args()
 
-    backgrounds = load_backgrounds(args.backgrounds) if args.backgrounds is not None else args.backgrounds
+    backgrounds = load_backgrounds(args.backgrounds)
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
     train_transforms = T.Compose([
         CustomTransformation(),
