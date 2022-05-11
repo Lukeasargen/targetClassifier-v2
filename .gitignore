@@ -5,5 +5,4 @@ __pycache__
 
 /images/*
 !images/readme
-/images/backgrounds/
 /logs*
