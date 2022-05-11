@@ -4,18 +4,18 @@ from collections import Counter
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, ExponentialLR
 from torch.utils.data import DataLoader
 from torchmetrics.functional import accuracy, precision_recall
-from torchvision.transforms import Normalize
 import torchvision.transforms as T
 
 from generator import LiveClassifyDataset
-from util import load_backgrounds, quantize_to_int
+from models import BasicResnet
+from util import load_backgrounds
 from util import AddGaussianNoise, CustomTransformation
 
 def get_args():
@@ -34,9 +34,12 @@ def get_args():
     parser.add_argument('--backgrounds', default=None, type=str, help="str. Path to folder with backgrounds images.")
     parser.add_argument('--fill_prob', default=0.5, type=float, help="float. percentage of images that have targets.")
     parser.add_argument('--mean', nargs=3, default=[0.485, 0.456, 0.406], type=float, help="3 floats. default is imagenet [0.485, 0.456, 0.406].")
-    parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float, help="3 floats, default is imagenet [0.229, 0.224, 0.225].")
+    parser.add_argument('--std', nargs=3, default=[0.229, 0.224, 0.225], type=float, help="3 floats. default is imagenet [0.229, 0.224, 0.225].")
     # Model parameters
-    parser.add_argument('--feature_dim', default=64, type=int, help="int. default=64. Dimension of final embedding.")
+    parser.add_argument('--filters', nargs='+', default=[16, 16, 32, 64], type=int, help="floats. default is [16, 16, 32, 64]. number of filters in each block, first value is the output dim of the stem and the final value is the feature dim.")
+    parser.add_argument('--blocks', nargs='+', default=[2, 2, 2], type=int, help="floats. default is [2, 2, 2]. number of blocks in each layer.")
+    parser.add_argument('--act', default=None, type=str, choices=['gelu', 'leaky_relu', 'relu', 'relu6', 'sigmoid', 'silu', 'tanh'], help="str. default=None. activation. use gelu, leaky_relu, relu, relu6, sigmoid, silu, tanh")
+    parser.add_argument('--se_ratio', default=0.0, type=float, help="float. default=0.0. SE is added to the residual branch.")
     parser.add_argument('--dropout', default=0.0, type=float, help="float. default=0.0. Dropout is used on the final embeddings.")
     # Training hyperparameter
     parser.add_argument('--train_size', default=320, type=int, help="int. default=320. number of images in 1 epoch.")
@@ -70,31 +73,13 @@ class ClassifyModel(pl.LightningModule):
     def __init__(self, **kwargs):
         super(ClassifyModel, self).__init__()
         self.save_hyperparameters()
-        channels = [
-            quantize_to_int(self.hparams.feature_dim/8,8),
-            quantize_to_int(self.hparams.feature_dim/4,8),
-            quantize_to_int(self.hparams.feature_dim/2,8),
-            quantize_to_int(self.hparams.feature_dim/1,8)
-        ]
         self.features = nn.Sequential(
-            Normalize(self.hparams.mean, self.hparams.std, inplace=True),
-            nn.Conv2d(in_channels=3, out_channels=channels[0], kernel_size=5, stride=1, padding=2, bias=False),
-            nn.BatchNorm2d(channels[0]),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=channels[0], out_channels=channels[1], kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(channels[1]),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=channels[1], out_channels=channels[2], kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(channels[2]),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=channels[2], out_channels=channels[3], kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(channels[3]),
-            nn.AdaptiveAvgPool2d((1,1)),
-            nn.Flatten(),
-            nn.Dropout(self.hparams.dropout)
+            T.Normalize(self.hparams.mean, self.hparams.std, inplace=True),
+            BasicResnet(3, self.hparams.filters, self.hparams.blocks, self.hparams.act,
+                        self.hparams.se_ratio)
         )
         for idx, (k,v) in enumerate(self.hparams.output_sizes.items()):
-            setattr(self, k, nn.Linear(channels[3], v, bias=True))
+            setattr(self, k, nn.Linear(self.hparams.filters[-1], v, bias=True))
         self.scheduler = None  # Set in configure_optimizers()
         self.opt_init_lr = None  # Set in configure_optimizers()
         self.sigma = nn.Parameter(torch.ones(len(self.hparams.output_sizes)))  # weighted loss, https://arxiv.org/abs/1705.07115
@@ -161,12 +146,15 @@ class ClassifyModel(pl.LightningModule):
                 angles = torch.rad2deg(torch.atan2(x, y))
                 error = abs((target[:,1]-angles+900)%360-180)
                 metrics[f"{k}/error"] = torch.mean(error[mask]) if sum(mask)>0 else 0
+                metrics[f"error/{k}"] = metrics[f"{k}/error"]
             else:
                 if k=="has_target": preds[k] = preds[k]>0.5
                 p = preds[k][mask]
                 t = target[:, idx][mask].long()
                 metrics[f"{k}/acc"] = accuracy(p, t) if sum(mask)>0 else 0
                 metrics[f"acc/{k}"] = metrics[f"{k}/acc"]
+                metrics[f"{k}/error"] = 1-metrics[f"{k}/acc"]
+                metrics[f"error/{k}"] = metrics[f"{k}/error"]
                 # TODO : add f1 score
                 if classes>2:
                     precision, recall = precision_recall(p, t, num_classes=classes, average="macro", mdmc_average="global") if sum(mask)>0 else (0,0)
@@ -304,34 +292,32 @@ if __name__ == "__main__":
     if not os.path.exists(dirpath):
         os.makedirs(dirpath)
 
-    # callbacks = [
-    #     ModelCheckpoint(
-    #         monitor=args.save_monitor+"/val_epoch",
-    #         dirpath=dirpath,
-    #         filename="topk/{epoch:d}-{step}-{accuracy/val_epoch:.4f}",
-    #         save_top_k=args.save_top_k,
-    #         mode='min' if args.save_monitor=='loss' else 'max',
-    #         period=1,  # Check every validation epoch
-    #         save_last=True,
-    #         save_on_train_epoch_end=False,
-    #     )
-    # ]
+    callbacks = [
+        TQDMProgressBar(refresh_rate=1),
+        # ModelCheckpoint(
+        #     monitor=args.save_monitor+"/val_epoch",
+        #     dirpath=dirpath,
+        #     filename="topk/{epoch:d}-{step}-{accuracy/val_epoch:.4f}",
+        #     save_top_k=args.save_top_k,
+        #     mode='min' if args.save_monitor=='loss' else 'max',
+        #     period=1,  # Check every validation epoch
+        #     save_last=True,
+        #     save_on_train_epoch_end=False,
+        # )
+    ]
 
     trainer = pl.Trainer(
         accumulate_grad_batches=args.accumulate,
         benchmark=args.benchmark,  # cudnn.benchmark
-        # callbacks=callbacks,
-        # check_val_every_n_epoch=args.val_interval,
+        callbacks=callbacks,
         deterministic=True,  # cudnn.deterministic
         gpus=args.gpus,
         gradient_clip_algorithm=args.grad_clip,
         gradient_clip_val=args.clip_value,
         logger=logger,
         precision=args.precision,
-        progress_bar_refresh_rate=1,
         max_epochs=args.epochs,
         num_sanity_val_steps=0,
-        # limit_val_batches=args.val_percent,
         log_every_n_steps=1,
     )
 
