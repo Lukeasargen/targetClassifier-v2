@@ -56,7 +56,7 @@ def make_regular_polygon(radius, sides, angle, center=(0,0)):
     return points
 
 class TargetGenerator():
-    def __init__(self, img_size, min_size, alias_factor=1, target_transforms=None, backgrounds=None):
+    def __init__(self, img_size, min_size, alias_factor=1, backgrounds=None, target_transforms=None):
         self.img_size = (img_size,img_size) if type(img_size)!=tuple else img_size
         self.min_size = min_size
         self.alias_factor = alias_factor
@@ -342,7 +342,7 @@ class LiveClassifyDataset(Dataset):
                 fill_prob=1.0, backgrounds=None, transforms=None):
         """ Dataset that makes generator object and calls it in __getitem__ """
         self.length = length
-        self.gen = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
+        self.gen = TargetGenerator(img_size, min_size, alias_factor, backgrounds, target_transforms)
         self.transforms = transforms if transforms else T.ToTensor()
         self.fill_prob = fill_prob
 
@@ -437,7 +437,7 @@ if __name__ == "__main__":
     fill_prob = 0.9
 
     backgrounds = load_backgrounds(backgrounds)
-    generator = TargetGenerator(img_size, min_size, alias_factor, target_transforms, backgrounds)
+    generator = TargetGenerator(img_size, min_size, alias_factor, backgrounds, target_transforms)
     # visualize_classify(generator)
     # visualize_segment(generator)
 
