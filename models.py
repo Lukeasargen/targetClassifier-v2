@@ -23,11 +23,11 @@ class VPActivation(nn.Module):
 
 acts_dict = {
     'gelu': {'act': nn.GELU(), 'gamma': 1.7015043497085571},
-    'leaky_relu': {'act': nn.LeakyReLU(), 'gamma': 1.70590341091156},
-    'relu': {'act': nn.ReLU(), 'gamma': 1.7139588594436646},
-    'relu6': {'act': nn.ReLU6(), 'gamma': 1.7131484746932983},
-    'sigmoid': {'act': nn.Sigmoid(), 'gamma': 4.803835391998291},
-    'silu': {'act': nn.SiLU(), 'gamma': 1.7881293296813965},
+    'leaky_relu': {'act': nn.LeakyReLU(inplace=True), 'gamma': 1.70590341091156},
+    'relu': {'act': nn.ReLU(inplace=True), 'gamma': 1.7139588594436646},
+    'relu6': {'act': nn.ReLU6(inplace=True), 'gamma': 1.7131484746932983},
+    'sigmoid': {'act': nn.Sigmoid(inplace=True), 'gamma': 4.803835391998291},
+    'silu': {'act': nn.SiLU(inplace=True), 'gamma': 1.7881293296813965},
     'tanh': {'act': nn.Tanh(), 'gamma': 1.5939117670059204},
     None: {'act': nn.Identity(), 'gamma': 1.0},
 }
