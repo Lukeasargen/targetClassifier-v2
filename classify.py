@@ -290,7 +290,7 @@ if __name__ == "__main__":
 
     # Increment to find the next availble name
     logger = TensorBoardLogger(save_dir="logs", name=args.name)    
-    dirpath = f"logs/{args.name}/version_{logger.version}"
+    dirpath = f"logs_{args.name}/version_{logger.version}"
     if not os.path.exists(dirpath):
         os.makedirs(dirpath)
 
