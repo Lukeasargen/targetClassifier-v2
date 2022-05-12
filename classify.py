@@ -136,7 +136,7 @@ class ClassifyModel(pl.LightningModule):
                     loss += nn.CrossEntropyLoss()(logits[k][mask]/self.sigma[i]**2.0, target[:, i][mask].long()) if sum(mask)>0 else 0
                 else:
                     loss += task_loss
-            metrics[f"{k}/loss"] = task_loss
+            metrics[f"loss/{k}"] = task_loss
             metrics[f"sigma/{k}"] = self.sigma[i]
         metrics["loss"] = loss
         return metrics
@@ -148,21 +148,18 @@ class ClassifyModel(pl.LightningModule):
                 x, y = preds[k][:,0], preds[k][:,1]
                 angles = torch.rad2deg(torch.atan2(x, y))
                 error = abs((target[:,1]-angles+900)%360-180)
-                metrics[f"{k}/error"] = torch.mean(error[mask]) if sum(mask)>0 else 0
-                metrics[f"error/{k}"] = metrics[f"{k}/error"]
+                metrics[f"error/{k}"] = torch.mean(error[mask]) if sum(mask)>0 else 0
             else:
                 if k=="has_target": preds[k] = preds[k]>0.5
                 p = preds[k][mask]
                 t = target[:, idx][mask].long()
-                metrics[f"{k}/acc"] = accuracy(p, t) if sum(mask)>0 else 0
-                metrics[f"acc/{k}"] = metrics[f"{k}/acc"]
-                metrics[f"{k}/error"] = 1-metrics[f"{k}/acc"]
-                metrics[f"error/{k}"] = metrics[f"{k}/error"]
+                metrics[f"acc/{k}"] = accuracy(p, t) if sum(mask)>0 else 0
+                metrics[f"error/{k}"] = 1-metrics[f"acc/{k}"]
                 # TODO : add f1 score
                 if classes>2:
                     precision, recall = precision_recall(p, t, num_classes=classes, average="macro", mdmc_average="global") if sum(mask)>0 else (0,0)
-                    metrics[f"{k}/precision"] = precision
-                    metrics[f"{k}/recall"] = recall
+                    metrics[f"precision/{k}"] = precision
+                    metrics[f"recall/{k}"] = recall
         return metrics
 
     def batch_step(self, batch):
@@ -179,6 +176,8 @@ class ClassifyModel(pl.LightningModule):
 
         # Update tensorboard for each train step
         for k, v in metrics.items():
+            if torch.is_tensor(v):
+                v = v.detach()
             self.log(k, v, on_step=True, on_epoch=True)
 
         # Update the lr during warmup
@@ -265,7 +264,7 @@ class ClassifyModel(pl.LightningModule):
 if __name__ == "__main__":
     args = get_args()
 
-    backgrounds = load_backgrounds(args.backgrounds)
+    backgrounds = load_backgrounds(args.backgrounds, 8*args.img_size)
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
     train_transforms = T.Compose([
         CustomTransformation(),
