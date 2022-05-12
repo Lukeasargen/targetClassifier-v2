@@ -26,12 +26,12 @@ acts_dict = {
     'leaky_relu': {'act': nn.LeakyReLU(inplace=True), 'gamma': 1.70590341091156},
     'relu': {'act': nn.ReLU(inplace=True), 'gamma': 1.7139588594436646},
     'relu6': {'act': nn.ReLU6(inplace=True), 'gamma': 1.7131484746932983},
-    'sigmoid': {'act': nn.Sigmoid(inplace=True), 'gamma': 4.803835391998291},
+    'sigmoid': {'act': nn.Sigmoid(), 'gamma': 4.803835391998291},
     'silu': {'act': nn.SiLU(inplace=True), 'gamma': 1.7881293296813965},
     'tanh': {'act': nn.Tanh(), 'gamma': 1.5939117670059204},
-    None: {'act': nn.Identity(), 'gamma': 1.0},
 }
 def get_act(name=None, gamma=None):
+    if name is None: return nn.Identity()
     act = acts_dict[name.lower()]
     gamma = gamma if (gamma is not None) else act['gamma']
     return VPActivation(act['act'], gamma)
@@ -176,6 +176,67 @@ class BasicResnet(nn.Sequential):
         self.add_module("avg", nn.AdaptiveAvgPool2d((1,1)))
         self.add_module("flatten", nn.Flatten())
 
+@torch.jit.script
+def autocrop(encoder_features: torch.Tensor, decoder_features: torch.Tensor):
+    """ Center crop the encoder down to the size of the decoder """
+    if encoder_features.shape[2:] != decoder_features.shape[2:]:
+        ds = encoder_features.shape[2:]
+        es = decoder_features.shape[2:]
+        assert ds[0] >= es[0]
+        assert ds[1] >= es[1]
+        encoder_features = encoder_features[:, :,
+                        ((ds[0] - es[0]) // 2):((ds[0] + es[0]) // 2),
+                        ((ds[1] - es[1]) // 2):((ds[1] + es[1]) // 2)
+                        ]
+    return encoder_features, decoder_features
+
+class DoubleConv(nn.Sequential):
+    def __init__(self, in_channels, out_channels, kernel_size=3, 
+                stride=1, padding=1, activation=None):
+        super().__init__()
+        self.add_module("conv1", nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=False))
+        self.add_module("bn1", nn.BatchNorm2d(out_channels))
+        self.add_module("act1", get_act(activation))
+        self.add_module("conv2", nn.Conv2d(out_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding, bias=False))
+        self.add_module("bn2", nn.BatchNorm2d(out_channels))
+        self.add_module("act2", get_act(activation))
+
+class Down(nn.Sequential):
+    def __init__(self, in_channels, out_channels, kernel_size=3, 
+                stride=1, padding=1, activation=None, downsample='avg'):
+        super().__init__()
+        self.add_module(downsample, get_downsample(downsample, stride, in_channels))
+        self.add_module("double_conv", DoubleConv(in_channels, out_channels, kernel_size, 1, padding, activation))
+
+class Up(nn.Module):
+    def __init__(self, in_channels, out_channels, activation=None):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
+        self.conv = DoubleConv(2*out_channels, out_channels, activation=activation)
+
+    def forward(self, encoder_features: torch.Tensor, decoder_features: torch.Tensor):
+        decoder_features = self.up(decoder_features)
+        encoder_features, decoder_features = autocrop(encoder_features, decoder_features)
+        x = torch.cat([encoder_features, decoder_features], dim=1)
+        return self.conv(x)
+
+class UNet(nn.Module):
+    def __init__(self, in_channels, out_channels, filters=[8, 16, 32, 64], activation=None,
+                downsample='avg'):
+        super(UNet, self).__init__()
+        self.input = DoubleConv(in_channels, filters[0])
+        self.encoders = nn.ModuleList([Down(filters[i], filters[i+1], stride=2, activation=activation, downsample=downsample) for i in range(len(filters)-1)])
+        self.decoders = nn.ModuleList([Up(filters[i+1], filters[i], activation=activation) for i in reversed(range(len(filters)-1))])
+        self.out = nn.Conv2d(filters[0], out_channels, kernel_size=1)
+
+    def forward(self, x):
+        features = [self.input(x)]
+        for level, enc in enumerate(self.encoders):
+            features.append(enc(features[level]))
+        up = features[len(self.decoders)]
+        for level, dec in enumerate(self.decoders):
+            up = dec(features[len(self.decoders)-level-1], up)
+        return self.out(up)
 
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.model_summary import summarize
@@ -196,21 +257,26 @@ if __name__ == "__main__":
     in_channels = 3
     filters = [16, 16, 32, 64]
     blocks = [2, 2, 2]
-    activation = 'gelu'
+    activation = 'gelu'  # gelu, leaky_relu, relu, relu6, sigmoid, silu, tanh
     downsample = 'avg'  # max, avg, blur
     bottleneck_ratio = 0.5
     se_ratio = 0
     stochastic_depth = 0
-    model = BasicResnet(in_channels, filters, blocks, activation, downsample, bottleneck_ratio, se_ratio, stochastic_depth)
-    print(model)
-    x = torch.ones((1, in_channels, input_size, input_size))
-    m = LitModel(model, x)
-    print(summarize(m))
+    # x = torch.ones((1, in_channels, input_size, input_size))
+    # resnet = BasicResnet(in_channels, filters, blocks, activation, downsample, bottleneck_ratio, se_ratio, stochastic_depth)
+    # print(resnet)
+    # m = LitModel(resnet, x)
+    # print(summarize(m))
 
     # Segment
-    input_size = 32
+    input_size = 256
     in_channels = 3
+    out_channels = 1
     filters = [16, 16, 32, 64]
-    activation = 'gelu'
+    activation = 'gelu'  # gelu, leaky_relu, relu, relu6, sigmoid, silu, tanh
     downsample = 'avg'  # max, avg, blur
-
+    inp = torch.rand(1, in_channels, input_size, input_size)
+    unet = UNet(in_channels, out_channels, filters, activation, downsample)
+    # print(unet)
+    m = LitModel(unet, inp)
+    print(summarize(m))
