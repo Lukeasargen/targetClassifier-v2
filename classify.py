@@ -39,8 +39,10 @@ def get_args():
     parser.add_argument('--filters', nargs='+', default=[16, 16, 32, 64], type=int, help="floats. default is [16, 16, 32, 64]. number of filters in each block, first value is the output dim of the stem and the final value is the feature dim.")
     parser.add_argument('--blocks', nargs='+', default=[2, 2, 2], type=int, help="floats. default is [2, 2, 2]. number of blocks in each layer.")
     parser.add_argument('--act', default=None, type=str, choices=['gelu', 'leaky_relu', 'relu', 'relu6', 'sigmoid', 'silu', 'tanh'], help="str. default=None. activation. use gelu, leaky_relu, relu, relu6, sigmoid, silu, tanh")
+    parser.add_argument('--downsample', default='avg', type=str, choices=['avg', 'max', 'blur'], help="str. default=avg. activation. use avg, max, blur")
+    parser.add_argument('--bottleneck_ratio', default=0.0, type=float, help="float. default=0.0. 1x1 conv downsampling on the residual branch.")
     parser.add_argument('--se_ratio', default=0.0, type=float, help="float. default=0.0. SE is added to the residual branch.")
-    parser.add_argument('--dropout', default=0.0, type=float, help="float. default=0.0. Dropout is used on the final embeddings.")
+    parser.add_argument('--stochastic_depth', default=0.0, type=float, help="float. default=0.0. stochastic_depth zeros random features on the residual branch.")
     # Training hyperparameter
     parser.add_argument('--train_size', default=320, type=int, help="int. default=320. number of images in 1 epoch.")
     parser.add_argument('--batch', default=16, type=int, help="int. default=1. batch size.")
@@ -76,7 +78,8 @@ class ClassifyModel(pl.LightningModule):
         self.features = nn.Sequential(
             T.Normalize(self.hparams.mean, self.hparams.std, inplace=True),
             BasicResnet(3, self.hparams.filters, self.hparams.blocks, self.hparams.act,
-                        self.hparams.se_ratio)
+                    self.hparams.downsample, self.hparams.bottleneck_ratio, self.hparams.se_ratio,
+                    self.hparams.stochastic_depth)
         )
         for idx, (k,v) in enumerate(self.hparams.output_sizes.items()):
             setattr(self, k, nn.Linear(self.hparams.filters[-1], v, bias=True))

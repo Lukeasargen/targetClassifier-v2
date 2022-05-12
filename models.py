@@ -36,6 +36,54 @@ def get_act(name=None, gamma=None):
     gamma = gamma if (gamma is not None) else act['gamma']
     return VPActivation(act['act'], gamma)
 
+""" Anti aliasing CNNs
+https://github.com/adobe/antialiased-cnns/blob/master/antialiased_cnns/blurpool.py
+The code is inspired by the link above.
+"""
+def make_gaussian_kernel2d(kernel=3, std=1):
+    """Returns a 2D Gaussian kernel array."""
+    n = torch.arange(0,kernel)-(kernel-1.0)/2.0
+    gk1d = torch.exp(-n**2/(2*std*std))
+    gk2d = torch.outer(gk1d, gk1d)
+    gk2d = gk2d / torch.sum(gk2d)
+    return gk2d
+
+class CustomBlurPool(nn.Module):
+    def __init__(self, channels, kernel_size=3, stride=1, padding=0):
+        super(CustomBlurPool, self).__init__()
+        self.channels = channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.pad = nn.ReflectionPad2d(padding)
+        kernel = make_gaussian_kernel2d(kernel=kernel_size, std=1)
+        self.register_buffer('kernel', kernel[None,None,:,:].repeat((channels,1,1,1)))
+
+    def forward(self, x):
+        return F.conv2d(self.pad(x), self.kernel, None, self.stride, groups=self.channels)
+
+def get_downsample(downsample, stride, channels):
+    if downsample=='avg':
+        return nn.AvgPool2d(kernel_size=stride, stride=stride)
+    elif downsample=='max':
+        return nn.MaxPool2d(kernel_size=stride, stride=stride)
+    elif downsample=='blur':
+        return CustomBlurPool(channels, kernel_size=3, stride=stride, padding=1)
+
+class StochasticDepth(nn.Module):
+    def __init__(self, drop_rate=0.0):
+        super(StochasticDepth, self).__init__()
+        self.drop_rate = drop_rate
+
+    def extra_repr(self):
+        return f"drop_rate={self.drop_rate}"
+
+    def forward(self, x):
+        if not self.training or self.drop_rate==0.0:
+            return x
+        rand_tensor = torch.rand(x.shape[0], 1, 1, 1).type_as(x).to(x.device)
+        binary_tensor = torch.floor(rand_tensor+1-self.drop_rate)
+        return x*binary_tensor
+
 class SqueezeExcite(nn.Module):
     def __init__(self, in_channels, se_ratio):
         super(SqueezeExcite, self).__init__()
@@ -53,7 +101,7 @@ class SqueezeExcite(nn.Module):
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, activation=None, 
-                se_ratio=0.0):
+                downsample='avg', bottleneck_ratio=0, se_ratio=0, stochastic_depth=0):
         super(ResidualBlock, self).__init__()
 
         self.pre_activation = nn.Sequential()
@@ -61,18 +109,33 @@ class ResidualBlock(nn.Module):
         self.pre_activation.add_module(activation, get_act(activation))
 
         self.residual = nn.Sequential()
-        self.residual.add_module("conv1", nn.Conv2d(in_channels, out_channels,
-                kernel_size=(3,3), stride=stride, padding=1, bias=False))
-        self.residual.add_module("bn", nn.BatchNorm2d(out_channels))
-        self.residual.add_module(activation, get_act(activation))
-        self.residual.add_module("conv2", nn.Conv2d(out_channels, out_channels,
-                kernel_size=(3,3), stride=1, padding=1, bias=False))
+        if bottleneck_ratio>0:
+            mid_channels = quantize_to_int(out_channels*bottleneck_ratio, 8)
+            self.residual.add_module("conv1", nn.Conv2d(in_channels, mid_channels,
+                    kernel_size=(1,1), stride=1, padding=0, bias=False))
+            self.residual.add_module("bn1", nn.BatchNorm2d(mid_channels))
+            self.residual.add_module(activation+"1", get_act(activation))
+            self.residual.add_module("conv2", nn.Conv2d(mid_channels, mid_channels,
+                    kernel_size=(3,3), stride=stride, padding=1, bias=False))
+            self.residual.add_module("bn2", nn.BatchNorm2d(mid_channels))
+            self.residual.add_module(activation+"2", get_act(activation))
+            self.residual.add_module("conv3", nn.Conv2d(mid_channels, out_channels,
+                    kernel_size=(1,1), stride=1, padding=0, bias=False))
+        else:
+            self.residual.add_module("conv1", nn.Conv2d(in_channels, out_channels,
+                    kernel_size=(3,3), stride=stride, padding=1, bias=False))
+            self.residual.add_module("bn", nn.BatchNorm2d(out_channels))
+            self.residual.add_module(activation, get_act(activation))
+            self.residual.add_module("conv2", nn.Conv2d(out_channels, out_channels,
+                    kernel_size=(3,3), stride=1, padding=1, bias=False))
         if se_ratio>0:
             self.residual.add_module("se", SqueezeExcite(out_channels, se_ratio))
-
+        if stochastic_depth>0:
+            self.residual.add_module("stochastic_depth", StochasticDepth(stochastic_depth))
+        
         if stride != 1 or in_channels != out_channels:
             self.shortcut = nn.Sequential()
-            self.shortcut.add_module("avg", nn.AvgPool2d(kernel_size=stride, stride=stride))
+            self.shortcut.add_module(downsample, get_downsample(downsample, stride, in_channels))
             self.shortcut.add_module("conv", nn.Conv2d(in_channels, out_channels,
                     kernel_size=(1,1), stride=1, bias=False))
         else:
@@ -86,15 +149,17 @@ class ResidualBlock(nn.Module):
         residual = self.residual(activated)
         return shortcut + residual
 
-def resnet_block(in_ch, out_ch, blocks, stride, activation=None, se_ratio=None):
-    layers = [ResidualBlock(in_ch, out_ch, stride, activation, se_ratio)]
+def resnet_stage(in_ch, out_ch, blocks, stride, activation=None,
+                downsample='avg', bottleneck_ratio=0, se_ratio=0, stochastic_depth=0):
+    layers = [ResidualBlock(in_ch, out_ch, stride, activation, downsample, bottleneck_ratio, se_ratio, stochastic_depth=0)]
     for i in range(1, blocks):
-        layers.append(ResidualBlock(out_ch, out_ch, 1, activation, se_ratio))
+        drop_rate = stochastic_depth * (1+i)/blocks  # Linearly increase drop rate over a stage
+        layers.append(ResidualBlock(out_ch, out_ch, 1, activation, downsample, bottleneck_ratio, se_ratio, drop_rate))
     return nn.Sequential(*layers)
 
 class BasicResnet(nn.Sequential):
     def __init__(self, in_channels, filters=[64, 64, 128, 256, 512], blocks=[2, 2, 2, 2], activation=None,
-                se_ratio=0.0):
+                downsample='avg', bottleneck_ratio=0.0, se_ratio=0.0, stochastic_depth=0.0):
         super(BasicResnet, self).__init__()
         assert (len(filters)-1)==len(blocks), "filters and blocks length do not match."
 
@@ -104,7 +169,8 @@ class BasicResnet(nn.Sequential):
 
         for idx, num_blocks in enumerate(blocks):
             stride = 1 if idx == 0 else 2  # Downsample after the first block
-            self.add_module(f"block{idx}", resnet_block(filters[idx], filters[idx+1], num_blocks, stride, activation, se_ratio))
+            self.add_module(f"block{idx}", resnet_stage(filters[idx], filters[idx+1], num_blocks, stride, activation,
+                                            downsample, bottleneck_ratio, se_ratio, stochastic_depth))
 
         self.add_module("avg", nn.AdaptiveAvgPool2d((1,1)))
         self.add_module("flatten", nn.Flatten())
@@ -129,9 +195,12 @@ if __name__ == "__main__":
     filters = [16, 16, 32, 64]
     blocks = [2, 2, 2]
     activation = 'gelu'
+    downsample = 'avg'  # max, avg, blur
+    bottleneck_ratio = 0.5
     se_ratio = 0
+    stochastic_depth = 0
 
-    model = BasicResnet(in_channels, filters, blocks, activation, se_ratio)
+    model = BasicResnet(in_channels, filters, blocks, activation, downsample, bottleneck_ratio, se_ratio, stochastic_depth)
     print(model)
     x = torch.ones((1, in_channels, input_size, input_size))
     m = LitModel(model, x)
