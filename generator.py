@@ -297,7 +297,8 @@ class TargetGenerator():
             min_size = self.min_size
         # Pick random gridsize based on input and target_size.
         bkg_w, bkg_h = img_size
-        scale_w, scale_h = bkg_w//min_size, bkg_h//min_size  # Smallest grid cells based on the smallest target
+        # Smallest grid cells based on the smallest target. adding 1 enforces enough space for min_size
+        scale_w, scale_h = bkg_w//(min_size+1), bkg_h//(min_size+1)
         max_num = min(scale_w, scale_h)
         num = np.random.randint(1, max_num+1) if max_num>1 else 1 # Divisions along the smallest dimension
         # Scale divisions two both axis
@@ -315,6 +316,7 @@ class TargetGenerator():
         max_size = int(min(step_w, step_h))  # Targest target that can fit in the rectangle.
         # Number of pixels the target can be moved from the center of the rectangle
         offset_x, offset_y = int(step_w-max_size), int(step_h-max_size)
+        traget_centers = []  # x,y center pixel coordinates in the output downscaled image
         for i in range(len(target_mask)):
             y = i // num_w
             x = (i - y*num_w)
@@ -322,7 +324,9 @@ class TargetGenerator():
                 target, label = self.draw_target((step_w, step_h), min_size, transparent_bkg=True)
                 ox = np.random.randint(0, offset_x+1) if offset_x > 0 else 0
                 oy = np.random.randint(0, offset_y+1) if offset_y > 0 else 0
-                place_targets.paste(target, (int((x*step_w+ox)*self.alias_factor), int((y*step_h+oy)*self.alias_factor)), target)  # Alpha channel is the mask
+                cx, cy = (x*step_w+ox), (y*step_h+oy)
+                place_targets.paste(target, (int(cx*self.alias_factor), int(cy*self.alias_factor)), target)  # Alpha channel is the mask
+                traget_centers.append((cx+step_w/2, cy+step_h/2))  # Pixel center for the downscaled image
         mask = Image.new('RGBA', size=(int(bkg_w*self.alias_factor), int(bkg_h*self.alias_factor)), color=(0, 0, 0, 0))
         mask.alpha_composite(place_targets)  # Removes the transparent aliasing border from the mask
         if self.backgrounds is not None:
@@ -354,30 +358,45 @@ class LiveClassifyDataset(Dataset):
         target = list(y.values())
         return self.transforms(img), torch.tensor(target, dtype=torch.float).squeeze()
 
+class LiveSegmentDataset(Dataset):
+    def __init__(self, length, img_size, min_size, alias_factor=1, target_transforms=None,
+                fill_prob=1.0, backgrounds=None, transforms=None):
+        """ Dataset that makes generator object and calls it in __getitem__ """
+        self.length = length
+        self.gen = TargetGenerator(img_size, min_size, alias_factor, backgrounds, target_transforms)
+        self.transforms = transforms if transforms else T.ToTensor()
+        self.fill_prob = fill_prob
+        self.transform_mask = T.Compose([T.Grayscale(num_output_channels=1), T.ToTensor()])
+    
+    def __len__(self):
+        return self.length
 
-def visualize_classify(gen):
-    nrows, ncols = 8, 8
+    def __getitem__(self, idx):
+        img, mask = self.gen.gen_segment(fill_prob=self.fill_prob)
+        return self.transforms(img), self.transform_mask(mask)
+
+def visualize_classify(gen, rc=(8,8), img_size=64, min_size=28, fill_prob=0.9):
+    nrows, ncols = rc
     rows = []
     for i in range(nrows):
-        row = [gen.gen_classify(img_size=64, min_size=28, fill_prob=0.9)[0] for j in range(ncols)]
+        row = [gen.gen_classify(img_size, min_size, fill_prob)[0] for j in range(ncols)]
         rows.append( np.hstack(row) )
     grid_img = np.vstack(rows)
     im = Image.fromarray(grid_img.astype('uint8'), 'RGB')
     im.show()
     im.save("images/visualize_classify.png")
 
-def visualize_segment(gen):
-    nrows, ncols = 3, 2
+def visualize_segment(gen, rc=(3,2), img_size=128, min_size=28, fill_prob=0.5):
+    nrows, ncols = rc
     rows = []
     for i in range(nrows):
         row = []
         for j in range(ncols):
-            img, mask = gen.gen_segment(img_size=(128, 128), min_size=28, fill_prob=0.5)
+            img, mask = gen.gen_segment(img_size, min_size, fill_prob)
             row.append(img)
             row.append(mask)
         rows.append( np.hstack(row) )
     grid_img = np.vstack(rows)
-    print(grid_img.shape)
     im = Image.fromarray(grid_img.astype('uint8'), 'RGB')
     im.show()
     im.save("images/visualize_segment.png")
@@ -407,7 +426,7 @@ def visualize_batch(dataloader):
         ax.set_xticks([]); ax.set_yticks([])
         ax.imshow(make_grid((images.detach()[:64]), nrow=8).permute(1, 2, 0))
         break
-    fig.savefig('images/classify_processed.png', bbox_inches='tight')
+    fig.savefig('images/visualize_batch.png', bbox_inches='tight')
     plt.show()
 
 def time_dataloader(dataset, batch_size=64, max_num_workers=8):
@@ -433,16 +452,14 @@ if __name__ == "__main__":
     min_size = 28  # pixels
     alias_factor = 2  # generate higher resolution targets and downscale, improves aliasing effects
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
-    backgrounds = None  # r'C:\Users\lukeasargen\projects\aerial_backgrounds'
+    backgrounds = r'C:\Users\lukeasargen\projects\aerial_validate'
     fill_prob = 0.9
 
     backgrounds = load_backgrounds(backgrounds)
     generator = TargetGenerator(img_size, min_size, alias_factor, backgrounds, target_transforms)
-    # visualize_classify(generator)
-    # visualize_segment(generator)
 
     batch_size = 64
-    train_size = 1024
+    train_size = 2560
     shuffle = False
     num_workers = 0
     drop_last = True
@@ -452,11 +469,20 @@ if __name__ == "__main__":
         AddGaussianNoise(0.01),
     ])
 
-    dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
+    # Classify
+    # visualize_classify(generator, rc=(8,8), img_size=64, min_size=28, fill_prob=0.9)
+    # dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
     # dataset_stats(dataset, num=1000)
     # time_dataloader(dataset, batch_size=256, max_num_workers=8)
-
-    loader = DataLoader(dataset=dataset, batch_size=batch_size ,shuffle=shuffle,
-        num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
+    # loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle,
+    #     num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
     # visualize_batch(loader)
 
+    # Segmentation
+    # visualize_segment(generator, rc=(3,2), img_size=128, min_size=28, fill_prob=0.5)
+    # dataset = LiveSegmentDataset(train_size, 128, 28, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
+    # dataset_stats(dataset, num=1000)
+    # time_dataloader(dataset, batch_size=64, max_num_workers=8)
+    # loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle,
+    #     num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
+    # visualize_batch(loader)
