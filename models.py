@@ -54,12 +54,13 @@ class CustomBlurPool(nn.Module):
         self.channels = channels
         self.kernel_size = kernel_size
         self.stride = stride
-        self.pad = nn.ReflectionPad2d(padding)
+        self.pad = padding
         kernel = make_gaussian_kernel2d(kernel=kernel_size, std=1)
         self.register_buffer('kernel', kernel[None,None,:,:].repeat((channels,1,1,1)))
 
     def forward(self, x):
-        return F.conv2d(self.pad(x), self.kernel, None, self.stride, groups=self.channels)
+        padded = F.pad(x, (self.pad, self.pad, self.pad, self.pad), mode='reflect')
+        return F.conv2d(padded, self.kernel, None, self.stride, groups=self.channels)
 
 def get_downsample(downsample, stride, channels):
     if downsample=='avg':
@@ -190,6 +191,7 @@ class LitModel(pl.LightningModule):
 
 if __name__ == "__main__":
 
+    # Classify
     input_size = 32
     in_channels = 3
     filters = [16, 16, 32, 64]
@@ -199,9 +201,16 @@ if __name__ == "__main__":
     bottleneck_ratio = 0.5
     se_ratio = 0
     stochastic_depth = 0
-
     model = BasicResnet(in_channels, filters, blocks, activation, downsample, bottleneck_ratio, se_ratio, stochastic_depth)
     print(model)
     x = torch.ones((1, in_channels, input_size, input_size))
     m = LitModel(model, x)
     print(summarize(m))
+
+    # Segment
+    input_size = 32
+    in_channels = 3
+    filters = [16, 16, 32, 64]
+    activation = 'gelu'
+    downsample = 'avg'  # max, avg, blur
+
