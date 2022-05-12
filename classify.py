@@ -313,7 +313,7 @@ if __name__ == "__main__":
         accumulate_grad_batches=args.accumulate,
         benchmark=args.benchmark,  # cudnn.benchmark
         callbacks=callbacks,
-        deterministic=True,  # cudnn.deterministic
+        deterministic=False,  # cudnn.deterministic
         gpus=args.gpus,
         gradient_clip_algorithm=args.grad_clip,
         gradient_clip_val=args.clip_value,
