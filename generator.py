@@ -1,9 +1,9 @@
 import os
 import random
 import time
-import numpy as np
 
 import matplotlib.pyplot as plt
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import psutil
 import torch
@@ -455,7 +455,7 @@ if __name__ == "__main__":
     backgrounds = r'C:\Users\lukeasargen\projects\aerial_validate'
     fill_prob = 0.9
 
-    backgrounds = load_backgrounds(backgrounds)
+    backgrounds = load_backgrounds(backgrounds, size=256)
     generator = TargetGenerator(img_size, min_size, alias_factor, backgrounds, target_transforms)
 
     batch_size = 64

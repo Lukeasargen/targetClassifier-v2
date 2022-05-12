@@ -4,6 +4,7 @@ import time
 import numpy as np
 from PIL import Image, ImageFilter
 import torch
+import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 
 def pil_loader(path):
@@ -12,11 +13,13 @@ def pil_loader(path):
         img = Image.open(f)
         return img.convert('RGB')
 
-def load_backgrounds(folder_path):
+def load_backgrounds(folder_path, size=None):
     if folder_path==None: return None
     print(" * Loading backgrounds...")
     ts = time.time()
     backgrounds = [pil_loader(os.path.join(os.getcwd(), x)) for x in os.scandir(folder_path)]
+    if size is not None:
+        backgrounds = [T.Resize(size)(img) for img in backgrounds]
     print(f" ** Backgrounds loaded. {time.time()-ts:.03f} seconds for {len(backgrounds)} images.")
     return backgrounds
 
