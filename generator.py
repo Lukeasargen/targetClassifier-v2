@@ -12,6 +12,7 @@ import torchvision.transforms as T
 
 from util import load_backgrounds
 from util import AddGaussianNoise, CustomTransformation
+from util import color_options, shape_options, letter_options
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'  # draw.polygon raised an error
 
@@ -66,33 +67,15 @@ class TargetGenerator():
             self.bkg_count = 0  # track which background index to get next
             self.bkg_idxs = list(range(len(self.backgrounds)))  # shuffled list of indexes
         
-        self.color_options = [
-            'white', 'black', 'gray', 'red', 'blue',
-            'green', 'yellow', 'purple', 'brown', 'orange'
-        ]
-        self.shape_options = [
-            "circle", "semicircle", "quartercircle", "triangle", "square",
-            "rectangle", "trapezoid", "pentagon", "hexagon", "heptagon",
-            "octagon", "star", "cross"
-        ]
-        # No W or 9
-        self.letter_options = [
-            'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-            'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-            'U', 'V', 'X', 'Y', 'Z', '1', '2', '3', '4', '5',
-            '6', '7', '8', '0'
-        ]
-
         # Compute the output size. 2 colors, 1 shape, 1 letter, 2 values for orientaion
         self.output_sizes = {
             "has_target": 1,
             "angle": 2,
-            "shape": len(self.shape_options),
-            "letter": len(self.letter_options),
-            "shape_color": len(self.color_options),
-            "letter_color": len(self.color_options),
+            "shape": len(shape_options),
+            "letter": len(letter_options),
+            "shape_color": len(color_options),
+            "letter_color": len(color_options),
         }
-        self.num_outputs = sum(self.output_sizes.values())
 
     def draw_shape(self, draw, img_size, min_size, shp_idx, shp_color_idx):
         """ Do not use directly. This is called within draw_target.
@@ -100,8 +83,8 @@ class TargetGenerator():
             Scale and rotation are uniformly sampled.
             It returns values that specify how to draw the letter.
         """
-        shape_color = color_to_hsv(self.color_options[shp_color_idx])
-        shape = self.shape_options[shp_idx]
+        shape_color = color_to_hsv(color_options[shp_color_idx])
+        shape = shape_options[shp_idx]
         # Uniformly sample that target size.
         # Half this is the radius of the circumscribed circle. Polygon vertices are on this circle.
         r = (np.random.uniform(min_size*self.alias_factor, min(self.alias_factor*img_size[0], self.alias_factor*img_size[1]))) // 2
@@ -210,11 +193,11 @@ class TargetGenerator():
             image has the specified size, color, and angle."""
         font_path = "fonts/"+random.choice(os.listdir("fonts"))
         font = ImageFont.truetype(font_path, size=ltr_size*2)  # Double since ltr_size is based on radius
-        letter_color = color_to_hsv(self.color_options[ltr_color_idx])
-        w, h = draw.textsize(self.letter_options[ltr_idx], font=font)
+        letter_color = color_to_hsv(color_options[ltr_color_idx])
+        w, h = draw.textsize(letter_options[ltr_idx], font=font)
         img = Image.new("RGBA", (w, h), color=(0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        draw.text((0,0), self.letter_options[ltr_idx], fill=letter_color, font=font)
+        draw.text((0,0), letter_options[ltr_idx], fill=letter_color, font=font)
         angle = np.random.uniform(0, 360)  # Rotate each letter randomly.
         img = img.rotate(angle, expand=1)  # This rotates CCW, so 360-angle is the CW angle
         return img, 360-angle
@@ -222,15 +205,15 @@ class TargetGenerator():
     def draw_target(self, img_size, min_size, fill_prob=1.0, transparent_bkg=False):
         """ Draws a random target on a transparent PIL image. Also returns the correct labels. """
         # Sample the label space with uniform random sampling
-        bkg_color_idx, shp_color_idx, ltr_color_idx = np.random.choice(range(len(self.color_options)), 3, replace=False)
+        bkg_color_idx, shp_color_idx, ltr_color_idx = np.random.choice(range(len(color_options)), 3, replace=False)
         alias_size = (int(self.alias_factor*img_size[0]), int(self.alias_factor*img_size[1]))
         has_target = np.random.rand() < fill_prob
         # Create a tranparent image. Transparent background allows PIL to overlay the image.
         target = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
         if has_target:
             draw = ImageDraw.Draw(target)
-            shp_idx = np.random.randint(0, len(self.shape_options))
-            ltr_idx = np.random.randint(0, len(self.letter_options))
+            shp_idx = np.random.randint(0, len(shape_options))
+            ltr_idx = np.random.randint(0, len(letter_options))
             # Drawing puts the shape directly on the PIL image. Outputs are the center of the shape and the max letter size in pixels
             (cx, cy), ltr_size = self.draw_shape(draw, img_size, min_size, shp_idx, shp_color_idx)
             letter, angle = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
@@ -244,7 +227,7 @@ class TargetGenerator():
 
         # If there are no backgrounds and no transparent_bkg arg, then use the bkg_color_idx.
         if self.backgrounds == None and not transparent_bkg:
-            bkg_color = color_to_hsv(self.color_options[bkg_color_idx])
+            bkg_color = color_to_hsv(color_options[bkg_color_idx])
             img = Image.new('RGBA', size=alias_size, color=bkg_color)
             if has_target:  # Add the target to to the background
                 img.paste(target, None, target)  # Alpha channel is the mask

@@ -6,6 +6,7 @@ import onnxruntime as ort # pip install onnxruntime-gpu
 from classify import ClassifyModel
 from generator import TargetGenerator
 from util import load_backgrounds
+from util import color_options, shape_options, letter_options
 
 def main():
     checkpoint_path = r"logs\classify\version_23\checkpoints\epoch=169-step=17000.ckpt"
@@ -47,12 +48,12 @@ def main():
         ax.set_title(title_str, color=title_color)
 
         if label['has_target']:
-            y_str = f"{generator.color_options[label['shape_color']]} {generator.shape_options[label['shape']]} / "
-            y_str += f"{generator.color_options[int(preds[4])]} {generator.shape_options[int(preds[2])]}"
+            y_str = f"{color_options[label['shape_color']]} {shape_options[label['shape']]} / "
+            y_str += f"{color_options[int(preds[4])]} {shape_options[int(preds[2])]}"
             y_color = "g" if (label['shape_color']==int(preds[4])) and (label['shape']==int(preds[2])) else "r"
             ax.set_ylabel(y_str, color=y_color)
-            x_str = f"{generator.color_options[label['letter_color']]} {generator.letter_options[label['letter']]} / "
-            x_str += f"{generator.color_options[int(preds[5])]} {generator.letter_options[int(preds[3])]}"
+            x_str = f"{color_options[label['letter_color']]} {letter_options[label['letter']]} / "
+            x_str += f"{color_options[int(preds[5])]} {letter_options[int(preds[3])]}"
             x_color = "g" if (label['letter_color']==int(preds[5])) and (label['letter']==int(preds[3])) else "r"
             ax.set_xlabel(x_str, color=x_color)
 

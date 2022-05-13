@@ -280,12 +280,6 @@ if __name__ == "__main__":
             target_transforms, args.fill_prob, backgrounds, train_transforms)
     train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch ,shuffle=False,
         num_workers=args.workers, drop_last=True, persistent_workers=(True if args.workers > 0 else False))
-    
-    args.color_options = train_dataset.gen.color_options
-    args.shape_options = train_dataset.gen.shape_options
-    args.letter_options = train_dataset.gen.letter_options
-    args.output_sizes = train_dataset.gen.output_sizes
-    args.num_outputs = train_dataset.gen.num_outputs
 
     model = ClassifyModel(**vars(args))
 

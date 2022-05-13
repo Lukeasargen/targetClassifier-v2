@@ -4,8 +4,27 @@ import time
 import numpy as np
 from PIL import Image, ImageFilter
 import torch
+import torch.nn.functional as F
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
+
+
+color_options = [
+    'white', 'black', 'gray', 'red', 'blue',
+    'green', 'yellow', 'purple', 'brown', 'orange'
+]
+shape_options = [
+    "circle", "semicircle", "quartercircle", "triangle", "square",
+    "rectangle", "trapezoid", "pentagon", "hexagon", "heptagon",
+    "octagon", "star", "cross"
+]
+# No W or 9
+letter_options = [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+    'U', 'V', 'X', 'Y', 'Z', '1', '2', '3', '4', '5',
+    '6', '7', '8', '0'
+]
 
 def pil_loader(path):
     # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
@@ -91,3 +110,40 @@ class CustomTransformation(torch.nn.Module):
         # img = self.brightness(img)
         # img = self.sharpen(img)
         return img
+
+def pixel_accuracy(preds, targets, threshold: float = 0.5):
+    accsum = 0.0
+    preds = preds > threshold
+    correct = (preds == targets).sum()
+    total = targets.shape[0]*targets.shape[2]*targets.shape[3]
+    return correct/total
+
+def jaccard_iou(preds, targets, smooth: float = 1.0):
+    preds = preds.view(-1)
+    targets = targets.view(-1)
+    intersection = (preds * targets).sum()
+    total = (preds + targets).sum()
+    union = total - intersection
+    return (intersection + smooth) / (union + smooth)
+
+def dice_coeff(preds, targets, smooth: float = 1.0):
+    preds = preds.view(-1)
+    targets = targets.view(-1)
+    intersection = (preds * targets).sum()
+    unionset = (preds + targets).sum()
+    return (2.0 * intersection + smooth) / (unionset + smooth)
+
+def tversky_measure(preds, targets, alpha: float = 0.5, beta: float = 0.5, smooth: float = 1.0):
+    preds = preds.view(-1)
+    targets = targets.view(-1)
+    tp = (preds * targets).sum()
+    fp = ((1.0-targets) * preds).sum()
+    fn = (targets * (1.0-preds)).sum()
+    return (tp + smooth) / (tp + alpha*fp + beta*fn + smooth)
+
+def focal_metric(logits, targets, alpha: float, gamma: float):
+    logits = logits.view(-1)
+    targets = targets.view(-1)
+    bce = F.binary_cross_entropy_with_logits(logits, targets)
+    bce_exp = torch.exp(-bce)
+    return alpha * bce * (1.0-bce_exp)**gamma
