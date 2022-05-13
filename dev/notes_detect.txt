@@ -1,0 +1,52 @@
+cd projects
+cd targetClassifier-v2
+conda activate uas_vision
+
+tensorboard --logdir logs/segment/
+--------------------------------------------------------------------------------
+python detect.py 
+Init and setup
+--seed=42 --name=classify --workers=4 --gpus=0
+--benchmark --precision=32
+Dataset
+--img_size=32 --min_size=28 --alias_factor=1 --fill_prob=0.5 
+--backgrounds=images/backgrounds
+classify no backgrounds --mean 0.5368893  0.43507764 0.3849545 --std 0.13682073 0.13410869 0.14616862
+classify backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378
+segment backgrounds --mean 0.46986762 0.48680103 0.29467997 --std 0.18487453 0.17479563 0.19131261
+Model parameters
+--filters 16 16 32 64
+--act=gelu, leaky_relu, relu, relu6, sigmoid, silu, tanh
+--downsample=avg, max, blur
+--loss bce, jaccard, dice, tversky, focal
+Training hyperparameter
+--train_size=320 --batch=32 --epochs=100
+Optimizer
+--opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov
+--opt=adam --lr=4e-3
+--opt=adamw --lr=4e-3 --weight_decay=5e-4
+--lr_warmup_steps=0
+--accumulate=1
+--grad_clip=value --clip_value=0.0
+Scheduler
+--scheduler=step --milestones 10 15 --lr_gamma=0.1
+--scheduler=exp --lr_gamma=0.95
+--scheduler=plateau --plateau_patience=20 --lr_gamma=0.2 --min_lr=1e-6
+--------------------------------------------------------------------------------
+todo
+
+--------------------------------------------------------------------------------
+test commands
+
+previous --filters 16 32 64 128 256 1.9M
+16 16 32 64 128 495K
+v4 - 20 epoch test
+v5 - longer run
+v6 - step at epoch 20
+python detect.py --workers=6 --gpus=0 --benchmark --precision=32 --img_size=256 --min_size=28 --alias_factor=2 --fill_prob=0.5  --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.46986762 0.48680103 0.29467997 --std 0.18487453 0.17479563 0.19131261 --filters 16 16 32 64 128 --act=gelu --downsample=avg --loss jaccard bce --train_size=3200 --batch=32 --epochs=35 --opt=adam --lr=4e-3 --lr_warmup_steps=400 --scheduler=step --milestones 20 --lr_gamma=0.1
+
+
+
+
+
+
