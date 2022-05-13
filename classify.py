@@ -47,6 +47,7 @@ def get_args():
     parser.add_argument('--train_size', default=320, type=int, help="int. default=320. number of images in 1 epoch.")
     parser.add_argument('--batch', default=16, type=int, help="int. default=1. batch size.")
     parser.add_argument('--epochs', default=10, type=int, help="int. deafult=10. number of epochs")
+    parser.add_argument('--add_noise', default=0.01, type=float, help="float. default=0.01. gaussian noise on the input.")
     # Optimizer
     parser.add_argument('--opt', default='adam', type=str, choices=['sgd', 'adam', 'adamw'], help="str. default=adam. use sgd, adam, or adamw.")
     parser.add_argument('--lr', default=4e-3, type=float)
@@ -272,7 +273,7 @@ if __name__ == "__main__":
     train_transforms = T.Compose([
         CustomTransformation(),
         T.ToTensor(),
-        AddGaussianNoise(0.01),
+        AddGaussianNoise(args.add_noise),
     ])
 
     print(" * Creating datasets and dataloaders...")
@@ -280,6 +281,8 @@ if __name__ == "__main__":
             target_transforms, args.fill_prob, backgrounds, train_transforms)
     train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch ,shuffle=False,
         num_workers=args.workers, drop_last=True, persistent_workers=(True if args.workers > 0 else False))
+
+    args.output_sizes = train_dataset.gen.output_sizes
 
     model = ClassifyModel(**vars(args))
 
