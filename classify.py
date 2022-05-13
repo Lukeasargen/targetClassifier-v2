@@ -169,6 +169,11 @@ class ClassifyModel(pl.LightningModule):
         metrics = self.custom_loss(logits, target)
         preds = self.predictions(logits)
         metrics = self.add_metrics(metrics, preds, target)
+        # Detatch everything except the loss
+        for k, v in metrics.items():
+            if k!='loss' and torch.is_tensor(v):
+                v = v.detach()
+            metrics[k] = v
         return metrics
 
     def training_step(self, batch, batch_idx):
@@ -176,8 +181,6 @@ class ClassifyModel(pl.LightningModule):
 
         # Update tensorboard for each train step
         for k, v in metrics.items():
-            if torch.is_tensor(v):
-                v = v.detach()
             self.log(k, v, on_step=True, on_epoch=True)
 
         # Update the lr during warmup
