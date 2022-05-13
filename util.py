@@ -44,7 +44,7 @@ def load_backgrounds(folder_path, size=None):
 
 def quantize_to_int(x, q=8):
     """ Make interger divisible by q, but never smaller than q. """    
-    return int(q) if x<q else int(np.ceil(x/q)*q)
+    return int(q) if x<q else int(np.floor(x/q)*q)
 
 class AddGaussianNoise(torch.nn.Module):
     def __init__(self, std=0.01):
