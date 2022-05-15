@@ -51,8 +51,8 @@ class AddGaussianNoise(torch.nn.Module):
         self.std = std
         
     def __call__(self, tensor):
-        return tensor + torch.randn(tensor.size()) * self.std
-    
+        return tensor + torch.randn(tensor.size()) * self.std * np.random.uniform()
+
     def __repr__(self):
         return self.__class__.__name__ + f'(std={self.std})'
 
