@@ -67,10 +67,10 @@ class TargetGenerator():
             self.bkg_count = 0  # track which background index to get next
             self.bkg_idxs = list(range(len(self.backgrounds)))  # shuffled list of indexes
         
-        # Compute the output size. 2 colors, 1 shape, 1 letter, 2 values for orientaion
-        self.output_sizes = {
+        self.label_sizes = {
             "has_target": 1,
-            "angle": 2,
+            "has_letter": 1,
+            "angle": 2,  # Phasor as sin and cos
             "shape": len(shape_options),
             "letter": len(letter_options),
             "shape_color": len(color_options),
@@ -184,7 +184,7 @@ class TargetGenerator():
                 points.append( (c*ratio*np.sin((step*i + step/2) + np.radians(-angle))) + cy )
             draw.polygon(points, fill=shape_color)
             ltr_size = int(c*ratio*np.random.randint(90, 95) / 100)
-        return (cx, cy), ltr_size
+        return (cx, cy), ltr_size, 2*r
 
     def draw_letter(self, draw, ltr_size, ltr_idx, ltr_color_idx):
         """ Do not use. this is called within draw_target.
@@ -208,19 +208,25 @@ class TargetGenerator():
         bkg_color_idx, shp_color_idx, ltr_color_idx = np.random.choice(range(len(color_options)), 3, replace=False)
         alias_size = (int(self.alias_factor*img_size[0]), int(self.alias_factor*img_size[1]))
         has_target = np.random.rand() < fill_prob
+        has_letter = np.random.rand() < fill_prob
         # Create a tranparent image. Transparent background allows PIL to overlay the image.
         target = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
         if has_target:
             draw = ImageDraw.Draw(target)
             shp_idx = np.random.randint(0, len(shape_options))
-            ltr_idx = np.random.randint(0, len(letter_options))
             # Drawing puts the shape directly on the PIL image. Outputs are the center of the shape and the max letter size in pixels
-            (cx, cy), ltr_size = self.draw_shape(draw, img_size, min_size, shp_idx, shp_color_idx)
-            letter, angle = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
-            ox, oy = letter.size
-            temp = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
-            temp.paste(letter, (cx-(ox//2), cy-(oy//2)), letter)  # Put letter with offset based on size
-            target.alpha_composite(temp)  # removes the transparent aliasing border from the letter
+            # TODO: get the target bbox instead of shape size
+            (cx, cy), ltr_size, shp_size = self.draw_shape(draw, img_size, min_size, shp_idx, shp_color_idx)
+            if has_letter:
+                ltr_idx = np.random.randint(0, len(letter_options))
+                letter, angle = self.draw_letter(draw, ltr_size, ltr_idx, ltr_color_idx)
+                ox, oy = letter.size
+                temp = Image.new('RGBA', size=alias_size, color=(0, 0, 0, 0))
+                temp.paste(letter, (cx-(ox//2), cy-(oy//2)), letter)  # Put letter with offset based on size
+                target.alpha_composite(temp)  # removes the transparent aliasing border from the letter
+            else:
+                # Null labels for no letter
+                ltr_idx, angle = 0, 0
         else:
             # Null labels for when there is no target
             angle, shp_idx, ltr_idx, shp_color_idx, ltr_color_idx = 0,0,0,0,0
@@ -235,6 +241,7 @@ class TargetGenerator():
 
         label = {
             "has_target": int(has_target),
+            "has_letter": int(has_target and has_letter),
             "angle" : angle,
             "shape": shp_idx,
             "letter": ltr_idx,
@@ -431,8 +438,8 @@ def time_dataloader(dataset, batch_size=64, max_num_workers=8):
 
 if __name__ == "__main__":
 
-    img_size = 32  # pixels, (input_size, input_size) or (width, height)
-    min_size = 28  # pixels
+    img_size = 48  # pixels, (input_size, input_size) or (width, height)
+    min_size = 30  # pixels
     alias_factor = 2  # generate higher resolution targets and downscale, improves aliasing effects
     target_transforms = T.RandomPerspective(distortion_scale=0.5, p=1.0, interpolation="bicubic")
     backgrounds = r'C:\Users\lukeasargen\projects\aerial_validate'
@@ -446,20 +453,21 @@ if __name__ == "__main__":
     shuffle = False
     num_workers = 0
     drop_last = True
+    add_noise = 0.06
     train_transforms = T.Compose([
         CustomTransformation(),
         T.ToTensor(),
-        AddGaussianNoise(0.01),
+        AddGaussianNoise(add_noise),
     ])
 
     # Classify
     # visualize_classify(generator, rc=(8,8), img_size=64, min_size=28, fill_prob=0.9)
-    # dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
+    dataset = LiveClassifyDataset(train_size, img_size, min_size, alias_factor, target_transforms, fill_prob, backgrounds, train_transforms)
     # dataset_stats(dataset, num=1000)
     # time_dataloader(dataset, batch_size=256, max_num_workers=8)
-    # loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle,
-    #     num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
-    # visualize_batch(loader)
+    loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle,
+        num_workers=num_workers, drop_last=drop_last, persistent_workers=(True if num_workers > 0 else False))
+    visualize_batch(loader)
 
     # Segmentation
     # visualize_segment(generator, rc=(3,2), img_size=128, min_size=28, fill_prob=0.5)
