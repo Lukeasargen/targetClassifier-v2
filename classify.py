@@ -16,7 +16,7 @@ from torchmetrics.functional import accuracy, precision_recall
 import torchvision.transforms as T
 
 from generator import LiveClassifyDataset
-from models import BasicResnet
+from models import BasicResnet, WSConv2d
 from util import load_backgrounds
 from util import AddGaussianNoise, CustomTransformation
 
@@ -77,8 +77,8 @@ class ClassifyModel(pl.LightningModule):
     def __init__(self, **kwargs):
         super(ClassifyModel, self).__init__()
         self.save_hyperparameters()
-        conv = nn.Conv2d
-        norm = nn.BatchNorm2d
+        conv = nn.Conv2d if self.hparams.alpha==1.0 else WSConv2d
+        norm = nn.BatchNorm2d if self.hparams.alpha==1.0 else None
         self.features = nn.Sequential(
             T.Normalize(self.hparams.mean, self.hparams.std, inplace=True),
             BasicResnet(3, self.hparams.filters, self.hparams.blocks, self.hparams.act,
@@ -96,14 +96,14 @@ class ClassifyModel(pl.LightningModule):
         preds = self.predictions(logits)
         return preds
 
-    def logits(self, features):
+    def logits(self, features: Tensor) -> Dict[str, Tensor]:
         logits = {}
         for k, classifer in self.heads.items():
             # TODO : detach heads to stop gradients when task stops improving
             logits[k] = classifer(features)
         return logits
 
-    def predictions(self, logits):
+    def predictions(self, logits: Dict[str, Tensor]) -> Dict[str, Tensor]:
         preds = {}
         values = list(logits.values())
         preds["has_target"] = torch.sigmoid(values[0]).squeeze_()

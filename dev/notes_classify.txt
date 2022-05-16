@@ -44,8 +44,10 @@ Model parameters
 --bottleneck_ratio=0
 --se_ratio=0
 --stochastic_depth=0
+--alpha=1.0
 Training hyperparameter
 --train_size=320 --batch=32 --epochs=1
+--add_noise=0.01
 Optimizer
 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov
 --opt=adam --lr=4e-3
@@ -57,10 +59,10 @@ Scheduler
 --scheduler=step --milestones 10 15 --lr_gamma=0.1
 --scheduler=exp --lr_gamma=0.95
 --scheduler=plateau --plateau_patience=20 --lr_gamma=0.2 --min_lr=1e-6
-Other
---weighted_loss
 --------------------------------------------------------------------------------
 todo
+make targets without letter and mark as not targets
+
 beta and alpha scaling
 
 spatial transformer to crop
@@ -72,8 +74,6 @@ set max size in load_backgrounds to resize and save space
 non linear classifier heads
 spatial pyramidal pooling, deep layer aggregation (deeplabv3)
 
-evaluate
-output the sigmoid for has_target, calibrate using real images
 --------------------------------------------------------------------------------
 test commands
 
@@ -92,13 +92,13 @@ v19 - --downsample=max
 v20 - --stochastic_depth=0.25
 v21 - --bottleneck_ratio=0.5
 v22 - --filters 32 32 64 128 --bottleneck_ratio=0.5
-v23 - final for input_size=32
+v23 - final try1 for input_size=32
 python classify.py --workers=8 --gpus=0 --img_size=32 --min_size=28 --alias_factor=2 --fill_prob=0.75 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.43949696 0.4287838  0.3273663 --std 0.18663725 0.1653652  0.18666378 --filters 32 32 64 128 --blocks 2 2 2 --act=gelu --train_size=25600 --batch=256 --epochs=170 --opt=sgd --lr=4e-2 --weight_decay=5e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 100 140 --lr_gamma=0.2
+v25 - img_size=48, add_noise=0.042
+add has_letter task
+v28 - img_size=48, add_noise=0.06, fill_prob=0.9
+v29 - --add_noise=0.08
+add weight standarization
 
-Final Error for 100000 samples
-has_target: 0.00
-orientation: 14.1 deg average
-shape: 0.09
-shape_color: 0.00
-letter: 0.58
-letter_color: 0.90
+python classify.py --workers=8 --gpus=0 --img_size=48 --min_size=30 --alias_factor=2 --fill_prob=0.8 --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.40229252 0.3978662  0.3113497 --std 0.18565857 0.16436274 0.18099944 --filters 32 32 64 128 --blocks 2 2 2 --act=gelu --alpha=0.2 --train_size=25600 --batch=256 --epochs=95 --add_noise=0.08 --opt=sgd --lr=4e-2 --weight_decay=5e-4 --momentum=0.9 --nesterov --lr_warmup_steps=1000 --scheduler=step --milestones 70 85 --lr_gamma=0.2
+
