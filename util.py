@@ -26,6 +26,9 @@ letter_options = [
     '6', '7', '8', '0'
 ]
 
+def get_device():
+    return torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
 def pil_loader(path):
     # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
     with open(path, 'rb') as f:
