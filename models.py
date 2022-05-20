@@ -310,18 +310,18 @@ class LitModel(pl.LightningModule):
 if __name__ == "__main__":
 
     # Classify
-    input_size = 32
+    input_size = 48
     in_channels = 3
-    filters = [32, 32, 64, 128]
-    blocks = [2, 2, 2]
+    filters = [32, 64, 128, 256]
+    blocks = [2, 3, 2]
     activation = 'gelu'  # gelu, leaky_relu, relu, relu6, sigmoid, silu, tanh
     downsample = 'avg'  # max, avg, blur
-    bottleneck_ratio = 0
+    bottleneck_ratio = 0.5
     se_ratio = 0
     stochastic_depth = 0
-    conv = WSConv2d  # None, nn.Conv2d, WSConv2d
-    norm = None # None, nn.BatchNorm2d
-    alpha = 0.2
+    alpha = 1
+    conv = nn.Conv2d if alpha==1.0 else WSConv2d
+    norm = nn.BatchNorm2d if alpha==1.0 else None
     x = torch.ones((1, in_channels, input_size, input_size))
     resnet = BasicResnet(in_channels, filters, blocks, activation,
                 downsample, bottleneck_ratio, se_ratio, stochastic_depth,
