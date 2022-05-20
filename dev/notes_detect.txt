@@ -21,6 +21,7 @@ Model parameters
 --loss bce, jaccard, dice, tversky, focal
 Training hyperparameter
 --train_size=320 --batch=32 --epochs=100
+--add_noise=0.01
 Optimizer
 --opt=sgd --lr=6e-2 --weight_decay=1e-5 --momentum=0.9 --nesterov
 --opt=adam --lr=4e-3
@@ -43,7 +44,8 @@ previous --filters 16 32 64 128 256 1.9M
 v4 - 20 epoch test
 v5 - longer run
 v6 - step at epoch 20
-python detect.py --workers=6 --gpus=0 --benchmark --precision=32 --img_size=256 --min_size=28 --alias_factor=2 --fill_prob=0.5  --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.46986762 0.48680103 0.29467997 --std 0.18487453 0.17479563 0.19131261 --filters 16 16 32 64 128 --act=gelu --downsample=avg --loss jaccard bce --train_size=3200 --batch=32 --epochs=35 --opt=adam --lr=4e-3 --lr_warmup_steps=400 --scheduler=step --milestones 20 --lr_gamma=0.1
+v7 - --add_noise=0.08
+python detect.py --workers=6 --gpus=0 --benchmark --precision=32 --img_size=256 --min_size=28 --alias_factor=2 --fill_prob=0.5  --backgrounds=C:\Users\lukeasargen\projects\aerial_backgrounds --mean 0.46986762 0.48680103 0.29467997 --std 0.18487453 0.17479563 0.19131261 --filters 16 16 32 64 128 --act=gelu --downsample=avg --loss jaccard bce --train_size=3200 --batch=32 --epochs=35 --add_noise=0.08 --opt=adam --lr=4e-3 --lr_warmup_steps=400 --scheduler=step --milestones 20 --lr_gamma=0.1
 
 
 
