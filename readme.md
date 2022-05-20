@@ -10,7 +10,7 @@ Create a new conda environment with juypter kernel.
 conda create --name uas_vision python=3.9 -y
 conda activate uas_vision
 conda install ipykernel jupyter -y
-python -m ipykernel install --user --name uas_vision --display-name "uas_vision" -y
+python -m ipykernel install --user --name uas_vision --display-name "uas_vision"
 ```
 
 Get pytorch installed. Command generated here: https://pytorch.org/
