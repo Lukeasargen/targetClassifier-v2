@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'  # draw.polygon raised an error
 
 color_options = [
     'white', 'black', 'gray', 'red', 'blue',

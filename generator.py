@@ -14,8 +14,6 @@ from util import load_backgrounds
 from util import AddGaussianNoise, CustomTransformation
 from util import color_options, shape_options, letter_options
 
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'  # draw.polygon raised an error
-
 def rotate_2d(vector, angle, degrees = False):
     """
     Rotate a 2d vector counter-clockwise by @angle.\n
